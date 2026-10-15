@@ -1,9 +1,9 @@
 {
   "id": "canvesidian",
   "name": "Canvesidian",
-  "version": "0.1.0",
-  "minAppVersion": "1.5.0",
-  "description": "Arrange Markdown sections freely and attach stickers and notes that travel with them.",
+  "version": "0.2.0",
+  "minAppVersion": "1.8.0",
+  "description": "Move and edit existing blocks freely inside the same note in Live Preview.",
   "author": "Ali-Nourix",
   "isDesktopOnly": false
 }

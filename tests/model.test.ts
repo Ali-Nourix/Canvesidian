@@ -1,110 +1,137 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  sections,
-  replaceSection,
-  ensureTiles,
-  normalizeStore,
-  Board,
+  blocks,
+  blockAt,
+  capture,
+  restore,
+  normalize,
+  Pin,
+  SavedPin,
 } from "../src/model";
-test("source slices round-trip including CRLF and Persian", () => {
-  const s =
-    "---\r\ntitle: hello\r\n---\r\n\r\n# ایده\r\nمتن\r\n## Next\r\nBody";
-  assert.equal(
-    sections(s)
-      .map((s) => s.markdown)
-      .join(""),
-    s,
-  );
-  assert.equal(sections(s).length, 3);
+const pin = (source: string): Pin => ({
+  ...blocks(source)[0],
+  id: "test",
+  x: 20,
+  y: 40,
+  width: 320,
+  height: 160,
 });
-test("empty notes have an editable opening", () =>
+test("paragraphs, not heading sections, are independent units", () =>
   assert.deepEqual(
-    sections("").map((s) => s.id),
-    ["preamble"],
-  ));
-test("headings inside backtick and tilde fences are not split", () => {
-  const s = "# A\n```md\n# not a section\n```\n~~~\n# neither\n~~~\n## B\ntext";
-  assert.deepEqual(
-    sections(s).map((s) => s.title),
-    ["A", "B"],
-  );
-});
-test("shorter fence cannot close a longer fence", () =>
-  assert.equal(sections("# A\n````\n```\n# hidden\n````\n# B").length, 2));
-test("duplicate headings have unique and deterministic keys", () => {
-  const a = sections("# Same\nA\n# Same\nB");
-  assert.notEqual(a[0].id, a[1].id);
-  assert.deepEqual(a, sections("# Same\nA\n# Same\nB"));
-});
-test("editing body preserves identity", () =>
-  assert.equal(sections("# A\nold")[0].id, sections("# A\nnew")[0].id));
-test("replacement preserves unrelated bytes and heading line boundaries", () => {
-  const source = "# A\nold\n\n# B\nkeep";
-  const part = sections(source)[0];
-  assert.equal(
-    replaceSection(source, source, part, "# A\nnew"),
-    "# A\nnew\n# B\nkeep",
-  );
-});
-test("conflicting source changes abort rather than overwrite", () => {
-  const source = "# A\nold";
-  assert.throws(
-    () =>
-      replaceSection(source + "\nchanged", source, sections(source)[0], "new"),
-    /changed/,
-  );
-});
-test("missing section layouts are retained for recovery", () => {
-  const board: Board = { tiles: {} };
-  ensureTiles(board, sections("# A\nx"));
-  const tile = board.tiles[sections("# A\nx")[0].id];
-  tile.annotations.push({ id: "s", kind: "sticker", text: "⭐", x: 4, y: 6 });
-  ensureTiles(board, sections("# Renamed\nx"));
-  assert.equal(Object.keys(board.tiles).length, 2);
-  assert.equal(tile.annotations[0].text, "⭐");
-});
-test("layout defaults do not overlap horizontally", () => {
-  const b: Board = { tiles: {} };
-  ensureTiles(b, sections("# A\nx\n# B\ny"));
-  const [a, c] = Object.values(b.tiles);
-  assert.ok(c.x > a.x + a.width);
-});
-test("corrupt saved layouts are filtered and bounded", () => {
-  const result = normalizeStore({
-    version: 1,
-    boards: {
-      a: {
-        tiles: {
-          bad: { x: null, y: 1, width: 20 },
-          good: {
-            x: -2,
-            y: 5,
-            width: 9000,
-            annotations: [
-              {},
-              { id: "a", kind: "note", text: "hi", x: 2, y: 4 },
-            ],
-          },
-        },
-      },
-    },
-  });
-  assert.equal(result.boards.a.tiles.good.width, 1200);
-  assert.equal(result.boards.a.tiles.good.x, 0);
-  assert.equal(result.boards.a.tiles.good.annotations.length, 1);
-  assert.equal(result.boards.a.tiles.bad, undefined);
-});
-test("unknown schema versions do not load as valid layouts", () =>
-  assert.deepEqual(normalizeStore({ version: 99 }), {
-    version: 1,
-    boards: {},
-  }));
-
-test("YAML comments are not mistaken for note sections", () =>
-  assert.deepEqual(
-    sections("---\n# YAML comment\ntitle: test\n---\n# Real\ncontent").map(
-      (s) => s.title,
+    blocks("# Title\n\nFirst paragraph.\n\nSecond paragraph.").map(
+      (b) => b.kind,
     ),
-    ["Opening", "Real"],
+    ["ATXHeading1", "Paragraph", "Paragraph"],
   ));
+test("multiline paragraph is one block", () =>
+  assert.equal(blocks("One line\nanother line").length, 1));
+test("fenced code including Markdown headings stays one block", () =>
+  assert.deepEqual(
+    blocks("```md\n# Not a section\n\ntext\n```").map((b) => b.kind),
+    ["FencedCode"],
+  ));
+test("image paragraph is an independent block", () =>
+  assert.equal(
+    blocks("Text.\n\n![image](picture.png)\n\nMore.")[1].text,
+    "![image](picture.png)",
+  ));
+test("whole list, quotation and GFM table are atomic top-level units", () =>
+  assert.deepEqual(
+    blocks("- A\n- B\n\n> Quote\n\n| A | B |\n|---|---|\n| 1 | 2 |").map(
+      (b) => b.kind,
+    ),
+    ["BulletList", "Blockquote", "Table"],
+  ));
+test("frontmatter and comments cannot accidentally float", () =>
+  assert.deepEqual(
+    blocks("---\n# comment\ntitle: test\n---\n\nمتن فارسی").map((b) => b.text),
+    ["متن فارسی"],
+  ));
+test("cursor resolves whole containing block", () =>
+  assert.equal(blockAt("First\n\nSecond", 9)?.text, "Second"));
+test("empty document has no imaginary block", () =>
+  assert.equal(blocks("").length, 0));
+test("capturing geometry never changes source text", () => {
+  const s = "متن فارسی\r\nخط دوم\r\n\r\nبعدی";
+  const saved = capture(pin(s), s);
+  assert.equal(saved.text, blocks(s)[0].text);
+  assert.equal(s, "متن فارسی\r\nخط دوم\r\n\r\nبعدی");
+});
+test("unique anchors survive insertion before source block", () => {
+  const s = "First\n\nSecond";
+  const saved = capture(pin(s), s);
+  const result = restore([saved], "New\n\n" + s);
+  assert.equal(result.pins[0].from, 5);
+  assert.equal(result.detached.length, 0);
+});
+test("edited-offline text is detached, never hidden at an old offset", () => {
+  const saved = capture(pin("Original"), "Original");
+  assert.equal(restore([saved], "Different").pins.length, 0);
+  assert.equal(restore([saved], "Different").detached[0].text, "Original");
+});
+test("matching is block bounded, not a substring of another word", () => {
+  const saved = capture(pin("word"), "word");
+  assert.equal(restore([saved], "sword").pins.length, 0);
+});
+test("context disambiguates repeated paragraphs", () => {
+  const s = "A\n\nRepeated\n\nB\n\nRepeated\n\nC";
+  const p = { ...pin(s), ...blocks(s)[3] };
+  const saved = capture(p, s);
+  assert.equal(restore([saved], s).pins[0].from, p.from);
+});
+test("ambiguous references fail closed instead of picking first occurrence", () => {
+  const saved = {
+    ...capture(pin("Same"), "Same"),
+    before: "missing",
+    after: "missing",
+  };
+  const result = restore([saved], "Same\n\nSame");
+  assert.equal(result.pins.length, 0);
+  assert.equal(result.detached.length, 1);
+});
+test("overlapping restored records cannot hide the same range twice", () => {
+  const saved = capture(pin("One"), "One");
+  assert.equal(
+    restore([saved, { ...saved, id: "other" }], "One").pins.length,
+    1,
+  );
+});
+test("legacy board data is retained but not opened as a separate view", () => {
+  const legacy = { note: { tiles: {} } };
+  assert.deepEqual(
+    normalize({ version: 1, boards: legacy }).legacyBoards,
+    legacy,
+  );
+});
+test("future data schemas are rejected without silent reset", () =>
+  assert.throws(() => normalize({ version: 99 }), /not overwritten/));
+test("persisted coordinates are bounded and corrupt records filtered", () => {
+  const saved = { ...capture(pin("Hi"), "Hi"), x: -30, width: 9999 };
+  const data = normalize({ version: 2, notes: { a: { pins: [saved, {}] } } });
+  assert.equal(data.notes.a.pins.length, 1);
+  assert.equal(data.notes.a.pins[0].x, 0);
+  assert.equal(data.notes.a.pins[0].width, 1200);
+});
+
+test("interrupted drafts survive serialization and corrupt drafts are filtered", () => {
+  const value = normalize(
+    JSON.parse(
+      JSON.stringify({
+        version: 2,
+        notes: {},
+        recoveryDrafts: [
+          {
+            id: "draft",
+            path: "note.md",
+            text: "متن ذخیره‌نشده",
+            savedAt: "2026-10-15",
+          },
+          {},
+        ],
+      }),
+    ),
+  );
+  assert.equal(value.recoveryDrafts?.length, 1);
+  assert.equal(value.recoveryDrafts?.[0].text, "متن ذخیره‌نشده");
+});

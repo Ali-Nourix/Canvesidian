@@ -1,98 +1,73 @@
-// Local test double, NOT an Obsidian runtime or a shipping dependency.
-function create(parent: HTMLElement, tag: string, options: any = {}) {
-  if (typeof options === "string") options = { cls: options };
-  const el = document.createElement(tag);
-  if (options.cls) el.className = options.cls;
-  if (options.text) el.textContent = options.text;
-  for (const [k, v] of Object.entries(options.attr ?? {}))
-    el.setAttribute(k, String(v));
-  parent.append(el);
-  return el;
-}
-Object.assign(HTMLElement.prototype, {
-  createEl(this: HTMLElement, tag: string, o: any) {
-    return create(this, tag, o);
+// Only Obsidian's host API is mocked. CodeMirror itself is real in this harness.
+import { StateField, StateEffect } from "@codemirror/state";
+export const changeMode = StateEffect.define<boolean>();
+export const editorLivePreviewField = StateField.define<boolean>({
+  create: () => true,
+  update: (value, tr) => {
+    for (const effect of tr.effects)
+      if (effect.is(changeMode)) value = effect.value;
+    return value;
   },
-  createDiv(this: HTMLElement, o: any) {
-    return create(this, "div", o);
-  },
-  createSpan(this: HTMLElement, o: any) {
-    return create(this, "span", o);
-  },
-  empty(this: HTMLElement) {
-    this.replaceChildren();
-  },
-  setText(this: HTMLElement, s: string) {
-    this.textContent = s;
-  },
-  addClass(this: HTMLElement, s: string) {
-    this.classList.add(s);
-  },
+});
+export const editorInfoField = StateField.define<any>({
+  create: () => ({ file: { path: "Vision.md" }, editor: {} }),
+  update: (value) => value,
 });
 export class Component {
   load() {}
   unload() {}
 }
-export class TFile {
-  path = "Vision.md";
-  extension = "md";
-  basename = "Vision";
-}
 export class Notice {
   constructor(message: string) {
-    console.log(message);
+    (window as any).notices.push(message);
   }
 }
-export class ItemView {
-  contentEl = document.querySelector("#app") as HTMLElement;
-  app: any;
-  constructor(public leaf: any) {
-    this.app = leaf.app;
-  }
-  async setState() {}
-}
-export class WorkspaceLeaf {}
 export class Plugin {
   app: any;
   async loadData() {
     return (window as any).saved ?? null;
   }
   async saveData(data: any) {
-    (window as any).saved = data;
+    (window as any).saved = JSON.parse(JSON.stringify(data));
   }
-  registerView(type: string, f: any) {
-    this.app.factory = f;
+  registerEditorExtension(extension: any) {
+    (window as any).extension = extension;
   }
-  addCommand() {}
-  addRibbonIcon() {}
+  addCommand(command: any) {
+    (window as any).commands.push(command);
+  }
   registerEvent() {}
 }
+export class TFile {}
+export class Editor {}
+export type MarkdownFileInfo = any;
+export type App = any;
+export class MarkdownRenderer {
+  static async render(_app: any, text: string, el: HTMLElement) {
+    if (/^```/.test(text)) {
+      const p = document.createElement("pre");
+      p.textContent = text.replace(/^```[^\n]*\n/, "").replace(/\n```$/, "");
+      el.append(p);
+      return;
+    }
+    if (/^!\[.*?\]\(/.test(text)) {
+      const p = document.createElement("p");
+      p.textContent = "[ image block ]";
+      el.append(p);
+      return;
+    }
+    for (const block of text.split(/\n\n+/)) {
+      const h = block.match(/^(#{1,6}) (.*)$/);
+      const p = document.createElement(h ? "h" + h[1].length : "p");
+      p.textContent = h ? h[2] : block;
+      el.append(p);
+    }
+  }
+}
+
 export class Modal {
   titleEl = document.createElement("h2");
   contentEl = document.createElement("div");
-  el = document.createElement("dialog");
-  constructor(public app: any) {
-    this.el.append(this.titleEl, this.contentEl);
-  }
-  open() {
-    document.body.append(this.el);
-    (this as any).onOpen();
-    this.el.showModal();
-  }
-  close() {
-    this.el.close();
-    this.el.remove();
-    (this as any).onClose();
-  }
-}
-export class MarkdownView {}
-export class MarkdownRenderer {
-  static async render(_app: any, text: string, el: HTMLElement) {
-    for (const line of text.trim().split("\n")) {
-      const h = line.match(/^(#{1,6}) (.*)$/);
-      const item = document.createElement(h ? "h" + h[1].length : "p");
-      item.textContent = h ? h[2] : line;
-      el.append(item);
-    }
-  }
+  constructor(_app: any) {}
+  open() {}
 }
