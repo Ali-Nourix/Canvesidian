@@ -104,6 +104,8 @@ try {
   );
   const draw = async (label, from, to, steps = 12) => {
     await page.getByRole("button", { name: label, exact: true }).click();
+    if (await page.locator(".cv-tool-tray").isVisible())
+      await page.getByRole("button", { name: label, exact: true }).click();
     await page.mouse.move(...from);
     await page.mouse.down();
     await page.mouse.move(...to, { steps });
@@ -159,6 +161,9 @@ try {
   await page
     .getByRole("button", { name: "Draw with pen", exact: true })
     .click();
+  await page
+    .getByRole("button", { name: "Draw with pen", exact: true })
+    .click();
   await page.mouse.move(820, 690);
   await page.mouse.down();
   await page.evaluate(() => (window.transactionCount = 0));
@@ -180,7 +185,7 @@ try {
   assert.ok(
     await page.evaluate(() =>
       window.plugin.store.notes["Vision.md"].drawings.some(
-        (d) => d.kind === "pen" && d.opacity < 1 && d.strokeWidth === 16,
+        (d) => d.kind === "pen" && d.opacity < 1 && d.strokeWidth === 24,
       ),
     ),
   );
@@ -302,9 +307,12 @@ try {
   await touch
     .getByRole("button", { name: "Draw ellipse", exact: true })
     .click();
-  await touch.mouse.move(80, 590);
+  await touch
+    .getByRole("button", { name: "Draw ellipse", exact: true })
+    .click();
+  await touch.mouse.move(80, 540);
   await touch.mouse.down();
-  await touch.mouse.move(290, 700, { steps: 16 });
+  await touch.mouse.move(290, 650, { steps: 16 });
   await touch.mouse.up();
   await touch
     .getByRole("button", { name: "Select objects", exact: true })
@@ -323,7 +331,7 @@ try {
   await touch.screenshot({ path: "qa/design-mobile.png" });
   await touchContext.close();
   console.log(
-    "PASS: coarse-pointer layout keeps selected-object tools above its frame with a compact two-row dock",
+    "PASS: coarse-pointer layout keeps selected-object tools above its frame with a compact wrapped dock",
   );
   assert.deepEqual(errors, []);
   console.log("PASS: new design tools run without browser runtime errors");

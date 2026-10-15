@@ -98,3 +98,71 @@ test("corrupt optional point fields cannot crash shape restoration", () => {
   ])!;
   assert.equal(normalizeDrawings([{ ...d, points: "invalid" }]).length, 1);
 });
+
+test("v3 layouts migrate to v4 with drawings and placements intact", () => {
+  const d = drawingFromPoints("rect", [
+    [0, 0],
+    [100, 80],
+  ])!;
+  const data = normalize({
+    version: 3,
+    notes: { a: { pins: [], drawings: [d] } },
+  });
+  assert.equal(data.version, 4);
+  assert.equal(data.notes.a.drawings![0].id, d.id);
+});
+test("annotations round trip multilingual text, paper, font and sticker ID", () => {
+  const base = {
+    ...drawingFromPoints("rect", [
+      [0, 0],
+      [100, 80],
+    ])!,
+    kind: "sticky",
+    text: "ایده جدید\nNew idea",
+    fill: "#FFF0AD",
+    fontSize: 24,
+    sticker: "heart",
+  };
+  const data = normalize(
+    JSON.parse(
+      JSON.stringify({
+        version: 4,
+        notes: { a: { pins: [], drawings: [base] } },
+      }),
+    ),
+  );
+  const actual = data.notes.a.drawings![0];
+  assert.equal(actual.text, base.text);
+  assert.equal(actual.fill, base.fill);
+  assert.equal(actual.fontSize, 24);
+});
+test("annotation payload rejects unsafe fills and clamps long text and font", () => {
+  const d = {
+    ...drawingFromPoints("rect", [
+      [0, 0],
+      [100, 80],
+    ])!,
+    kind: "label",
+    text: "x".repeat(20000),
+    fill: "url(https://evil)",
+    fontSize: 900,
+    sticker: "unknown",
+  };
+  const actual = normalizeDrawings([d])[0];
+  assert.equal(actual.fill, "none");
+  assert.equal(actual.text!.length, 10000);
+  assert.equal(actual.fontSize, 72);
+  assert.equal(actual.sticker, "star");
+});
+test("new diamond arrow and sticker kinds are retained", () => {
+  for (const kind of ["diamond", "arrow", "sticker"]) {
+    const d = {
+      ...drawingFromPoints("rect", [
+        [0, 0],
+        [100, 80],
+      ])!,
+      kind,
+    };
+    assert.equal(normalizeDrawings([d])[0].kind, kind);
+  }
+});

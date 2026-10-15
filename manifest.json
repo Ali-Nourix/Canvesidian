@@ -1,7 +1,7 @@
 {
   "id": "canvesidian",
   "name": "Canvesidian",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "minAppVersion": "1.8.0",
   "description": "Arrange existing note blocks, use contextual design tools, and draw vectors in Live Preview.",
   "author": "Ali-Nourix",

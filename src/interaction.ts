@@ -114,6 +114,9 @@ export class Selection {
   constructor(private scroller: HTMLElement) {}
   select(item: Selectable | null) {
     if (this.current !== item) {
+      this.current?.root
+        .querySelectorAll(".cv-property-popover")
+        .forEach((n) => n.remove());
       this.current?.root.classList.remove("is-selected");
       this.current = item;
       item?.root.classList.add("is-selected");

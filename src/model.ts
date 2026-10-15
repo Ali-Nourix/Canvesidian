@@ -34,8 +34,9 @@ export interface RecoveryDraft {
   savedAt: string;
 }
 export interface InlineStore {
-  version: 3;
+  version: 4;
   recoveryDrafts?: RecoveryDraft[];
+  toolDefaults?: Record<string, ToolStyle>;
   notes: Record<string, SavedNote>;
   legacyBoards?: unknown;
 }
@@ -120,18 +121,54 @@ export function restore(
   return { pins, detached };
 }
 export function normalize(raw: unknown): InlineStore {
-  const result: InlineStore = { version: 3, notes: {} };
+  const result: InlineStore = { version: 4, notes: {} };
   if (!raw || typeof raw !== "object") return result;
   const object = raw as any;
   if (object.version === 1) {
     result.legacyBoards = object.boards;
     return result;
   }
-  if (object.version !== 2 && object.version !== 3)
+  if (object.version !== 2 && object.version !== 3 && object.version !== 4)
     throw new Error(
       "Unsupported Canvesidian data version. Existing layout data was not overwritten.",
     );
   if (object.legacyBoards) result.legacyBoards = object.legacyBoards;
+  result.toolDefaults = {};
+  for (const [mode, v] of Object.entries(object.toolDefaults ?? {}) as [
+    string,
+    any,
+  ][]) {
+    if (
+      ![
+        "pen",
+        "highlighter",
+        "rect",
+        "ellipse",
+        "line",
+        "diamond",
+        "arrow",
+        "sticky",
+        "label",
+        "sticker",
+      ].includes(mode) ||
+      !v
+    )
+      continue;
+    if (
+      !validStroke(v.stroke) ||
+      ![v.strokeWidth, v.opacity, v.fontSize].every(Number.isFinite)
+    )
+      continue;
+    result.toolDefaults[mode] = {
+      stroke: v.stroke,
+      strokeWidth: limit(v.strokeWidth, 1, 32),
+      opacity: limit(v.opacity, 0.1, 1),
+      fontSize: limit(v.fontSize, 12, 72),
+      fill: v.fill === "none" || validStroke(v.fill) ? v.fill : "none",
+      sticker: STICKERS.some((s) => s.id === v.sticker) ? v.sticker : "star",
+    };
+  }
+
   if (Array.isArray(object.recoveryDrafts))
     result.recoveryDrafts = object.recoveryDrafts.filter(
       (d: any) =>
@@ -174,7 +211,16 @@ export function normalize(raw: unknown): InlineStore {
   return result;
 }
 
-export type DrawingKind = "pen" | "rect" | "ellipse" | "line";
+export type DrawingKind =
+  | "pen"
+  | "rect"
+  | "ellipse"
+  | "line"
+  | "diamond"
+  | "arrow"
+  | "sticky"
+  | "label"
+  | "sticker";
 export interface Drawing extends Placement {
   id: string;
   kind: DrawingKind;
@@ -182,6 +228,10 @@ export interface Drawing extends Placement {
   stroke: string;
   strokeWidth: number;
   opacity: number;
+  fill?: string;
+  text?: string;
+  fontSize?: number;
+  sticker?: string;
 }
 export const validStroke = (s: unknown): s is string =>
   s === "currentColor" || (typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s));
@@ -195,7 +245,17 @@ export function normalizeDrawings(raw: unknown): Drawing[] {
         typeof d.id === "string" &&
         !ids.has(d.id) &&
         (ids.add(d.id), true) &&
-        ["pen", "rect", "ellipse", "line"].includes(d.kind) &&
+        [
+          "pen",
+          "rect",
+          "ellipse",
+          "line",
+          "diamond",
+          "arrow",
+          "sticky",
+          "label",
+          "sticker",
+        ].includes(d.kind) &&
         [d.x, d.y, d.width, d.height, d.strokeWidth, d.opacity].every(
           Number.isFinite,
         ) &&
@@ -204,6 +264,10 @@ export function normalizeDrawings(raw: unknown): Drawing[] {
     )
     .map((d) => ({
       ...d,
+      text: typeof d.text === "string" ? d.text.slice(0, 10000) : "",
+      fontSize: Number.isFinite(d.fontSize) ? limit(d.fontSize, 12, 72) : 18,
+      fill: d.fill === "none" || validStroke(d.fill) ? d.fill : "none",
+      sticker: STICKERS.some((s) => s.id === d.sticker) ? d.sticker : "star",
       x: limit(d.x, 0, 50000),
       y: limit(d.y, 0, 50000),
       width: limit(d.width, 2, 10000),
@@ -276,4 +340,25 @@ export function resized(
   if (handle.includes("n")) top = limit(top + dy, 0, bottom - minHeight);
   if (handle.includes("s")) bottom = limit(bottom + dy, top + minHeight, 60000);
   return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+/** Original Lucide-based stamp set; no remote image downloads. */
+export const STICKERS = [
+  { id: "star", icon: "star", label: "Star", color: "#D5803B" },
+  { id: "heart", icon: "heart", label: "Heart", color: "#E56458" },
+  { id: "thumbs-up", icon: "thumbs-up", label: "Thumbs up", color: "#46A171" },
+  { id: "check", icon: "circle-check", label: "Check", color: "#2783DE" },
+  { id: "idea", icon: "lightbulb", label: "Idea", color: "#D5803B" },
+  { id: "question", icon: "circle-help", label: "Question", color: "#9B6BC1" },
+  { id: "flame", icon: "flame", label: "Flame", color: "#E56458" },
+  { id: "sparkles", icon: "sparkles", label: "Sparkles", color: "#9B6BC1" },
+] as const;
+
+export interface ToolStyle {
+  stroke: string;
+  strokeWidth: number;
+  opacity: number;
+  fill: string;
+  fontSize: number;
+  sticker: string;
 }

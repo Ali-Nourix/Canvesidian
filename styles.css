@@ -457,3 +457,210 @@
     height: 44px;
   }
 }
+
+/* Tool ordering is physical, independent of the note's RTL direction. */
+.cv-tool-dock,
+.cv-context-toolbar,
+.cv-tool-tray,
+.cv-property-popover {
+  direction: ltr !important;
+  flex-direction: row !important;
+  unicode-bidi: isolate;
+}
+.cv-tool-dock {
+  flex-wrap: wrap;
+  justify-content: center;
+  width: max-content;
+}
+.cv-tool-tray[hidden] {
+  display: none !important;
+}
+.cv-tool-tray {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 292px;
+  max-width: calc(100vw - 40px);
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+  padding: 12px;
+  box-sizing: border-box;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px #00000014;
+  color: var(--text-normal);
+}
+.cv-tray-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.cv-style-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+.cv-option-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.cv-option-row > span {
+  font-size: 14px;
+  flex-basis: 100%;
+  color: var(--text-muted);
+}
+.cv-option-row output {
+  font-size: 14px;
+  width: 48px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cv-option-row input[type="range"] {
+  flex: 1;
+  min-width: 60px;
+  max-width: 190px;
+  margin: 0;
+}
+.cv-swatch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.cv-swatch-grid .cv-color-swatch {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  border: 3px solid var(--background-primary);
+  border-radius: 50%;
+  outline: 1px solid var(--background-modifier-border);
+  background: var(--swatch);
+  padding: 0;
+  box-shadow: none;
+}
+.cv-swatch-grid input[type="color"] {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.cv-sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.cv-sticker-grid .cv-icon-button {
+  width: 48px;
+  height: 48px;
+}
+.cv-sticker-grid svg {
+  width: 28px;
+  height: 28px;
+}
+.cv-full-properties {
+  width: 292px;
+  box-sizing: border-box;
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+  padding: 12px;
+}
+.cv-drawing-object[data-kind="sticky"] .cv-drawing-visual {
+  filter: drop-shadow(0 2px 3px #00000012);
+}
+.cv-annotation-text {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  white-space: pre-wrap;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  border-radius: 3px;
+}
+.cv-drawing-object[data-kind="label"] .cv-annotation-text {
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+}
+.cv-stamp-art {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 1px 1px #0003);
+  color: #d5803b;
+}
+.cv-stamp-art svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 2;
+  fill: currentColor;
+  fill-opacity: 0.14;
+  paint-order: stroke fill;
+}
+.cv-drawing-object.is-editing .cv-drawing-visual {
+  pointer-events: auto;
+}
+.cv-annotation-edit {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  padding: 6px;
+  box-sizing: border-box;
+}
+.cv-annotation-edit textarea {
+  flex: 1;
+  min-height: 24px;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  font: inherit;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  padding: 6px;
+  border: 1px solid var(--background-modifier-border);
+}
+.cv-annotation-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.cv-drawing-object.is-editing {
+  min-height: 110px;
+}
+@media (pointer: coarse) {
+  .cv-tool-dock {
+    grid-template-columns: repeat(6, 44px);
+  }
+  .cv-swatch-grid .cv-color-swatch,
+  .cv-swatch-grid input[type="color"] {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .cv-full-properties {
+    width: 284px;
+  }
+}
+
+.cv-swatch-grid .cv-color-swatch[aria-pressed="true"] {
+  outline: 2px solid var(--cv-selection, #2783de);
+}
+.cv-annotation-text,
+.cv-annotation-edit textarea {
+  unicode-bidi: plaintext;
+}
+
+.cv-icon-button[hidden] {
+  display: none !important;
+}

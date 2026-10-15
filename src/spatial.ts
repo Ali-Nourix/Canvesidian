@@ -311,6 +311,27 @@ export function createSpatialExtension(host: SpatialHost): Extension {
           host.app,
           {
             read: () => view.state.field(field),
+            getDefaults: () => host.store.toolDefaults ?? {},
+            saveDefault: (mode, style) => {
+              host.store.toolDefaults = {
+                ...host.store.toolDefaults,
+                [mode]: style,
+              };
+              host.scheduleSave();
+            },
+            recover: (path, text) => {
+              host.store.recoveryDrafts ??= [];
+              host.store.recoveryDrafts.push({
+                id: crypto.randomUUID(),
+                path,
+                text,
+                savedAt: new Date().toISOString(),
+              });
+              host.scheduleSave();
+              host.notify(
+                "An unfinished annotation draft was saved. Use Canvesidian: Recover interrupted block drafts.",
+              );
+            },
             setDrawings: (drawings) =>
               view.dispatch({
                 effects: action.of({ type: "drawings", drawings }),

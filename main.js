@@ -4289,18 +4289,44 @@ function restore(saved, source) {
   return { pins, detached };
 }
 function normalize(raw) {
-  const result = { version: 3, notes: {} };
+  const result = { version: 4, notes: {} };
   if (!raw || typeof raw !== "object") return result;
   const object = raw;
   if (object.version === 1) {
     result.legacyBoards = object.boards;
     return result;
   }
-  if (object.version !== 2 && object.version !== 3)
+  if (object.version !== 2 && object.version !== 3 && object.version !== 4)
     throw new Error(
       "Unsupported Canvesidian data version. Existing layout data was not overwritten."
     );
   if (object.legacyBoards) result.legacyBoards = object.legacyBoards;
+  result.toolDefaults = {};
+  for (const [mode, v] of Object.entries(object.toolDefaults ?? {})) {
+    if (![
+      "pen",
+      "highlighter",
+      "rect",
+      "ellipse",
+      "line",
+      "diamond",
+      "arrow",
+      "sticky",
+      "label",
+      "sticker"
+    ].includes(mode) || !v)
+      continue;
+    if (!validStroke(v.stroke) || ![v.strokeWidth, v.opacity, v.fontSize].every(Number.isFinite))
+      continue;
+    result.toolDefaults[mode] = {
+      stroke: v.stroke,
+      strokeWidth: limit(v.strokeWidth, 1, 32),
+      opacity: limit(v.opacity, 0.1, 1),
+      fontSize: limit(v.fontSize, 12, 72),
+      fill: v.fill === "none" || validStroke(v.fill) ? v.fill : "none",
+      sticker: STICKERS.some((s) => s.id === v.sticker) ? v.sticker : "star"
+    };
+  }
   if (Array.isArray(object.recoveryDrafts))
     result.recoveryDrafts = object.recoveryDrafts.filter(
       (d) => d && ["id", "path", "text", "savedAt"].every(
@@ -4332,11 +4358,25 @@ function normalizeDrawings(raw) {
   if (!Array.isArray(raw)) return [];
   const ids = /* @__PURE__ */ new Set();
   return raw.filter(
-    (d) => d && typeof d.id === "string" && !ids.has(d.id) && (ids.add(d.id), true) && ["pen", "rect", "ellipse", "line"].includes(d.kind) && [d.x, d.y, d.width, d.height, d.strokeWidth, d.opacity].every(
+    (d) => d && typeof d.id === "string" && !ids.has(d.id) && (ids.add(d.id), true) && [
+      "pen",
+      "rect",
+      "ellipse",
+      "line",
+      "diamond",
+      "arrow",
+      "sticky",
+      "label",
+      "sticker"
+    ].includes(d.kind) && [d.x, d.y, d.width, d.height, d.strokeWidth, d.opacity].every(
       Number.isFinite
     ) && validStroke(d.stroke) && (d.kind !== "pen" || Array.isArray(d.points))
   ).map((d) => ({
     ...d,
+    text: typeof d.text === "string" ? d.text.slice(0, 1e4) : "",
+    fontSize: Number.isFinite(d.fontSize) ? limit(d.fontSize, 12, 72) : 18,
+    fill: d.fill === "none" || validStroke(d.fill) ? d.fill : "none",
+    sticker: STICKERS.some((s) => s.id === d.sticker) ? d.sticker : "star",
     x: limit(d.x, 0, 5e4),
     y: limit(d.y, 0, 5e4),
     width: limit(d.width, 2, 1e4),
@@ -4378,6 +4418,16 @@ function resized(start, dx, dy, handle, minWidth = 24, minHeight = 24) {
   if (handle.includes("s")) bottom = limit(bottom + dy, top + minHeight, 6e4);
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
+var STICKERS = [
+  { id: "star", icon: "star", label: "Star", color: "#D5803B" },
+  { id: "heart", icon: "heart", label: "Heart", color: "#E56458" },
+  { id: "thumbs-up", icon: "thumbs-up", label: "Thumbs up", color: "#46A171" },
+  { id: "check", icon: "circle-check", label: "Check", color: "#2783DE" },
+  { id: "idea", icon: "lightbulb", label: "Idea", color: "#D5803B" },
+  { id: "question", icon: "circle-help", label: "Question", color: "#9B6BC1" },
+  { id: "flame", icon: "flame", label: "Flame", color: "#E56458" },
+  { id: "sparkles", icon: "sparkles", label: "Sparkles", color: "#9B6BC1" }
+];
 
 // src/spatial.ts
 var import_state = require("@codemirror/state");
@@ -4470,6 +4520,7 @@ var Selection = class {
   current = null;
   select(item) {
     if (this.current !== item) {
+      this.current?.root.querySelectorAll(".cv-property-popover").forEach((n) => n.remove());
       this.current?.root.classList.remove("is-selected");
       this.current = item;
       item?.root.classList.add("is-selected");
@@ -4510,6 +4561,144 @@ function addHandles(parent, onPointer, onKey) {
 
 // src/design-tools.ts
 var import_obsidian2 = require("obsidian");
+
+// src/tool-options.ts
+var COLORS = [
+  "currentColor",
+  "#2783DE",
+  "#46A171",
+  "#EAC26B",
+  "#D5803B",
+  "#E56458",
+  "#9B6BC1"
+];
+var PAPERS = [
+  "#FFF0AD",
+  "#E5F2FC",
+  "#DDF1E4",
+  "#FBE4E3",
+  "#ECE3F5",
+  "#F0EFED"
+];
+function defaultStyle(mode) {
+  return {
+    stroke: "currentColor",
+    strokeWidth: mode === "highlighter" ? 24 : 2,
+    opacity: mode === "highlighter" ? 0.35 : 1,
+    fill: mode === "sticky" ? PAPERS[0] : mode === "label" ? PAPERS[1] : "none",
+    fontSize: 18,
+    sticker: "star",
+    ...mode === "highlighter" ? { stroke: "#EAC26B" } : {}
+  };
+}
+function stylePanel(parent, kind, value, change) {
+  const panel = document.createElement("div");
+  panel.className = "cv-style-panel";
+  panel.setAttribute("role", "group");
+  panel.setAttribute("aria-label", "Appearance settings");
+  parent.append(panel);
+  const textKind = kind === "sticky" || kind === "label";
+  const row = (label) => {
+    const wrap = document.createElement("div");
+    wrap.className = "cv-option-row";
+    const caption = document.createElement("span");
+    caption.textContent = label;
+    wrap.append(caption);
+    panel.append(wrap);
+    return wrap;
+  };
+  const swatches = (label, colors, key) => {
+    const wrap = row(label);
+    const group = document.createElement("div");
+    group.className = "cv-swatch-grid";
+    wrap.append(group);
+    for (const color of colors) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "cv-color-swatch";
+      b.style.setProperty(
+        "--swatch",
+        color === "currentColor" ? "var(--text-normal)" : color === "none" ? "transparent" : color
+      );
+      b.setAttribute("aria-label", label + " " + color);
+      b.title = color === "none" ? "No fill" : color;
+      b.setAttribute("aria-pressed", String(value[key] === color));
+      b.onclick = () => {
+        value = { ...value, [key]: color };
+        change({ [key]: color });
+        group.querySelectorAll("button").forEach((n) => n.setAttribute("aria-pressed", String(n === b)));
+      };
+      group.append(b);
+    }
+    const custom = document.createElement("input");
+    custom.type = "color";
+    custom.title = "Custom " + label.toLowerCase();
+    custom.setAttribute("aria-label", custom.title);
+    custom.value = value[key].startsWith("#") ? value[key] : "#2783DE";
+    custom.onchange = () => {
+      value = { ...value, [key]: custom.value };
+      change({ [key]: custom.value });
+      group.querySelectorAll("button").forEach((n) => n.setAttribute("aria-pressed", "false"));
+    };
+    group.append(custom);
+  };
+  const number2 = (label, key, min, max, step) => {
+    const wrap = row(label);
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.value = String(value[key]);
+    input.setAttribute("aria-label", label);
+    const output = document.createElement("output");
+    const display = () => {
+      output.textContent = key === "opacity" ? Math.round(Number(input.value) * 100) + "%" : input.value + " px";
+    };
+    display();
+    input.oninput = display;
+    input.onchange = () => {
+      value = { ...value, [key]: Number(input.value) };
+      change({ [key]: Number(input.value) });
+      display();
+    };
+    wrap.append(input, output);
+  };
+  if (kind === "sticker") {
+    const stamps = row("Sticker");
+    const grid = document.createElement("div");
+    grid.className = "cv-sticker-grid";
+    stamps.append(grid);
+    for (const stamp of STICKERS) {
+      const b = iconButton(grid, stamp.icon, stamp.label, () => {
+        value = { ...value, sticker: stamp.id };
+        change({ sticker: stamp.id });
+        grid.querySelectorAll("button").forEach((n) => n.setAttribute("aria-pressed", String(n === b)));
+      });
+      b.style.color = stamp.color;
+      b.setAttribute("aria-pressed", String(value.sticker === stamp.id));
+    }
+  } else {
+    swatches(textKind ? "Text color" : "Stroke color", COLORS, "stroke");
+    if (textKind || ["rect", "ellipse", "diamond"].includes(kind))
+      swatches("Fill", textKind ? PAPERS : ["none", ...PAPERS], "fill");
+    if (textKind) number2("Font size", "fontSize", 12, 48, 1);
+    else number2("Size", "strokeWidth", 1, 32, 1);
+    number2("Opacity", "opacity", 0.1, 1, 0.05);
+  }
+  return panel;
+}
+function drawingStyle(d) {
+  return {
+    ...defaultStyle(d.kind),
+    ...d,
+    fill: d.fill ?? "none",
+    fontSize: d.fontSize ?? 18,
+    sticker: d.sticker ?? "star"
+  };
+}
+
+// src/design-tools.ts
 function confirmAction(app, title, message, label, confirm) {
   class Confirm extends import_obsidian2.Modal {
     onOpen() {
@@ -4559,6 +4748,12 @@ function drawingSVG(d) {
     shape.setAttribute("cy", String(d.height / 2));
     shape.setAttribute("rx", String(Math.max(1, d.width / 2 - 1)));
     shape.setAttribute("ry", String(Math.max(1, d.height / 2 - 1)));
+  } else if (d.kind === "diamond") {
+    shape = document.createElementNS(NS, "polygon");
+    shape.setAttribute(
+      "points",
+      `${d.width / 2},1 ${d.width - 1},${d.height / 2} ${d.width / 2},${d.height - 1} 1,${d.height / 2}`
+    );
   } else {
     shape = document.createElementNS(NS, "path");
     const pts = d.points ?? [
@@ -4572,7 +4767,10 @@ function drawingSVG(d) {
       ).join(" ")
     );
   }
-  shape.setAttribute("fill", "none");
+  shape.setAttribute(
+    "fill",
+    ["rect", "ellipse", "diamond"].includes(d.kind) ? d.fill ?? "none" : "none"
+  );
   shape.setAttribute("stroke", d.stroke);
   shape.setAttribute("stroke-width", String(d.strokeWidth));
   shape.setAttribute("stroke-linecap", "round");
@@ -4580,6 +4778,27 @@ function drawingSVG(d) {
   shape.setAttribute("vector-effect", "non-scaling-stroke");
   shape.setAttribute("opacity", String(d.opacity));
   svg.append(shape);
+  if (d.kind === "arrow") {
+    const pts = d.points ?? [
+      [0, 0],
+      [1, 1]
+    ];
+    const a = pts[0], b = pts[pts.length - 1];
+    const angle = Math.atan2((b[1] - a[1]) * d.height, (b[0] - a[0]) * d.width);
+    const size = Math.max(12, d.strokeWidth * 3);
+    const head = document.createElementNS(NS, "path");
+    const x = b[0] * d.width, y = b[1] * d.height;
+    head.setAttribute(
+      "d",
+      `M${x - size * Math.cos(angle - 0.5)},${y - size * Math.sin(angle - 0.5)} L${x},${y} L${x - size * Math.cos(angle + 0.5)},${y - size * Math.sin(angle + 0.5)}`
+    );
+    head.setAttribute("stroke", d.stroke);
+    head.setAttribute("stroke-width", String(d.strokeWidth));
+    head.setAttribute("fill", "none");
+    head.setAttribute("opacity", String(d.opacity));
+    head.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.append(head);
+  }
   return svg;
 }
 var DesignTools = class {
@@ -4594,20 +4813,48 @@ var DesignTools = class {
     this.dock.className = "cv-tool-dock";
     this.dock.setAttribute("role", "toolbar");
     this.dock.setAttribute("aria-label", "Note design tools");
+    this.dock.dir = "ltr";
     view.dom.append(this.dock);
+    this.tray = document.createElement("div");
+    this.tray.className = "cv-tool-tray";
+    this.tray.hidden = true;
+    this.dock.append(this.tray);
+    this.outside = (e) => {
+      if (!e.target?.closest(".cv-tool-dock"))
+        this.tray.hidden = true;
+    };
+    view.dom.addEventListener("pointerdown", this.outside);
+    this.cleanups.push(
+      () => view.dom.removeEventListener("pointerdown", this.outside)
+    );
     const tools = [
       ["select", "mouse-pointer-2", "Select objects"],
       ["pen", "pencil", "Draw with pen"],
       ["highlighter", "highlighter", "Draw with highlighter"],
       ["rect", "square", "Draw rectangle"],
       ["ellipse", "circle", "Draw ellipse"],
-      ["line", "minus", "Draw line"]
+      ["line", "minus", "Draw line"],
+      ["diamond", "diamond", "Draw diamond"],
+      ["arrow", "arrow-up-right", "Draw arrow"],
+      ["sticky", "sticky-note", "Add sticky note"],
+      ["label", "tag", "Add label"],
+      ["sticker", "stamp", "Add sticker"]
     ];
     for (const [mode, icon, label] of tools) {
-      const b = iconButton(this.dock, icon, label, () => this.setMode(mode));
+      const b = iconButton(this.dock, icon, label, () => {
+        const close = this.mode === mode && !this.tray.hidden;
+        this.setMode(mode);
+        if (mode !== "select" && !close) this.openOptions();
+      });
       b.dataset.tool = mode;
       b.setAttribute("aria-pressed", mode === "select" ? "true" : "false");
     }
+    iconButton(
+      this.dock,
+      "sliders-horizontal",
+      "Tool settings",
+      () => this.openOptions()
+    );
     this.dock.append(this.divider());
     iconButton(this.dock, "undo-2", "Undo drawing", () => this.undo());
     iconButton(this.dock, "redo-2", "Redo drawing", () => this.redo());
@@ -4619,7 +4866,7 @@ var DesignTools = class {
       () => confirmAction(
         this.app,
         "Reset this note\u2019s layout?",
-        "Return all floating blocks to normal text flow and remove all drawings in this note. Original Markdown text will not be deleted.",
+        "Return floating blocks to normal text flow and remove drawings, sticky notes, labels and stickers from this note. Original Markdown will not be deleted. Annotation text is stored in plugin data, not in Markdown.",
         "Reset layout",
         () => {
           this.setMode("select");
@@ -4661,12 +4908,13 @@ var DesignTools = class {
     );
     const key = (e) => {
       const target = e.target;
-      if (target.closest("textarea,input,.cm-content")) return;
+      if (target.closest("textarea,input,select,.cm-content")) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         this.disposeDrawing?.();
         this.setMode("select");
+        this.tray.hidden = true;
         this.selection.select(null);
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && (target.closest(".cv-tool-dock,.cv-drawing-object") || this.selection.current?.root.classList.contains("cv-drawing-object"))) {
@@ -4689,6 +4937,9 @@ var DesignTools = class {
   history = [];
   future = [];
   path = "";
+  options = /* @__PURE__ */ new Map();
+  tray;
+  outside;
   scrollFrame = 0;
   cleanups = [];
   divider() {
@@ -4697,9 +4948,40 @@ var DesignTools = class {
     d.setAttribute("aria-hidden", "true");
     return d;
   }
+  settings() {
+    if (!this.options.has(this.mode))
+      this.options.set(
+        this.mode,
+        this.cb.getDefaults()[this.mode] ?? defaultStyle(this.mode)
+      );
+    return this.options.get(this.mode);
+  }
+  openOptions() {
+    if (this.mode === "select") {
+      this.tray.hidden = true;
+      return;
+    }
+    this.tray.replaceChildren();
+    const title = document.createElement("div");
+    title.className = "cv-tray-title";
+    title.textContent = {
+      pen: "Pen",
+      highlighter: "Highlighter",
+      sticky: "Sticky note",
+      label: "Label",
+      sticker: "Stickers"
+    }[this.mode] ?? "Shape";
+    this.tray.append(title);
+    stylePanel(this.tray, this.mode, this.settings(), (patch) => {
+      this.options.set(this.mode, { ...this.settings(), ...patch });
+      this.cb.saveDefault(this.mode, this.settings());
+    });
+    this.tray.hidden = false;
+  }
   setMode(mode) {
     if (mode !== this.mode) this.disposeDrawing?.();
     this.mode = mode;
+    this.tray.hidden = true;
     this.layer.classList.toggle("is-drawing-mode", mode !== "select");
     if (mode !== "select") this.selection.select(null);
     for (const b of Array.from(
@@ -4746,7 +5028,8 @@ var DesignTools = class {
             this.layer,
             this.selection,
             (next) => this.change(next),
-            () => this.remove(d.id)
+            () => this.remove(d.id),
+            (text) => this.cb.recover(state.path, text)
           );
           this.shapes.set(d.id, object);
         }
@@ -4800,7 +5083,28 @@ var DesignTools = class {
     event.preventDefault();
     event.stopPropagation();
     this.disposeDrawing?.();
+    this.tray.hidden = true;
     const mode = this.mode;
+    const settings = { ...this.settings() };
+    if (["sticky", "label", "sticker"].includes(mode)) {
+      const [x, y] = this.point(event);
+      const value2 = {
+        id: crypto.randomUUID(),
+        kind: mode,
+        x,
+        y,
+        width: mode === "sticker" ? 80 : mode === "label" ? 180 : 240,
+        height: mode === "sticker" ? 80 : mode === "label" ? 64 : 200,
+        ...settings,
+        text: mode === "sticky" ? "Your idea\u2026" : mode === "label" ? "Label" : ""
+      };
+      this.commit([...this.cb.read().drawings, value2]);
+      this.setMode("select");
+      const object = this.shapes.get(value2.id);
+      this.selection.select(object ?? null);
+      if (mode !== "sticker") object?.editText();
+      return;
+    }
     const kind = mode === "highlighter" ? "pen" : mode;
     const points = [this.point(event)];
     let frame = 0;
@@ -4814,11 +5118,12 @@ var DesignTools = class {
       value = drawingFromPoints(
         kind,
         points,
-        mode === "highlighter" ? "#EAC26B" : "currentColor",
-        mode === "highlighter" ? 16 : 2,
-        mode === "highlighter" ? 0.35 : 1
+        settings.stroke,
+        settings.strokeWidth,
+        settings.opacity
       );
       if (!value || !this.draft) return;
+      value.fill = settings.fill;
       Object.assign(this.draft.style, {
         left: value.x + "px",
         top: value.y + "px",
@@ -4884,12 +5189,13 @@ var DesignTools = class {
   }
 };
 var DrawingObject = class {
-  constructor(value, view, parent, selection, change, remove) {
+  constructor(value, view, parent, selection, change, remove, recover) {
     this.value = value;
     this.view = view;
     this.selection = selection;
     this.change = change;
     this.remove = remove;
+    this.recover = recover;
     this.id = value.id;
     this.root = document.createElement("div");
     this.root.className = "cv-drawing-object";
@@ -4910,17 +5216,33 @@ var DrawingObject = class {
       () => this.select()
     );
     grip.onpointerdown = (e) => this.gesture(e);
+    grip.onkeydown = (e) => this.key(e);
+    if (!["sticky", "label", "sticker"].includes(value.kind)) {
+      iconButton(
+        this.toolbar,
+        "palette",
+        "Drawing color",
+        () => this.properties("color")
+      );
+      iconButton(
+        this.toolbar,
+        "sliders-horizontal",
+        "Brush thickness",
+        () => this.properties("width")
+      );
+    }
+    if (["sticky", "label"].includes(value.kind))
+      iconButton(
+        this.toolbar,
+        "pencil",
+        "Edit annotation text",
+        () => this.editText()
+      );
     iconButton(
       this.toolbar,
-      "palette",
-      "Drawing color",
-      () => this.properties("color")
-    );
-    iconButton(
-      this.toolbar,
-      "sliders-horizontal",
-      "Brush thickness",
-      () => this.properties("width")
+      "settings-2",
+      "Object appearance",
+      () => this.properties("all")
     );
     const del = iconButton(
       this.toolbar,
@@ -4938,11 +5260,16 @@ var DrawingObject = class {
       (e, h) => this.key(e, h)
     );
     this.root.onpointerdown = (e) => {
-      if (e.target.closest("button,.cv-property-popover")) return;
+      if (e.target.closest(
+        "button,input,textarea,.cv-property-popover"
+      ))
+        return;
       this.gesture(e);
     };
+    this.root.ondblclick = () => this.editText();
     this.root.onkeydown = (e) => {
-      if (e.target instanceof HTMLButtonElement) return;
+      if (e.target instanceof HTMLButtonElement || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+        return;
       this.key(e);
     };
     this.root.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -4952,6 +5279,8 @@ var DrawingObject = class {
   toolbar;
   id;
   visual;
+  editing = false;
+  input = null;
   cancelGesture = null;
   position = () => this.value;
   select() {
@@ -4967,8 +5296,89 @@ var DrawingObject = class {
       width: value.width + "px",
       height: value.height + "px"
     });
-    if (!this.visual.firstChild || old.kind !== value.kind || old.width !== value.width || old.height !== value.height || old.points !== value.points || old.stroke !== value.stroke || old.strokeWidth !== value.strokeWidth || old.opacity !== value.opacity)
-      this.visual.replaceChildren(drawingSVG(value));
+    if (!this.editing && (!this.visual.firstChild || old !== value))
+      this.render();
+  }
+  render() {
+    const d = this.value;
+    this.root.dataset.kind = d.kind;
+    if (d.kind === "sticky" || d.kind === "label") {
+      const text = document.createElement("div");
+      text.className = "cv-annotation-text";
+      text.dir = "auto";
+      text.textContent = d.text ?? "";
+      Object.assign(text.style, {
+        background: d.fill && d.fill !== "none" ? d.fill : "#FFF0AD",
+        color: d.stroke === "currentColor" ? "#2C2C2B" : d.stroke,
+        fontSize: (d.fontSize ?? 18) + "px",
+        opacity: String(d.opacity)
+      });
+      this.visual.replaceChildren(text);
+    } else if (d.kind === "sticker") {
+      const stamp = STICKERS.find((s) => s.id === d.sticker) ?? STICKERS[0];
+      const el = document.createElement("div");
+      el.className = "cv-stamp-art";
+      el.style.color = stamp.color;
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", stamp.label);
+      (0, import_obsidian2.setIcon)(el, stamp.icon);
+      this.visual.replaceChildren(el);
+    } else this.visual.replaceChildren(drawingSVG(d));
+  }
+  editText() {
+    if (this.editing || !["sticky", "label"].includes(this.value.kind)) return;
+    this.select();
+    this.editing = true;
+    this.root.classList.add("is-editing");
+    this.toolbar.querySelector(".cv-property-popover")?.remove();
+    const wrap = document.createElement("div");
+    wrap.className = "cv-annotation-edit";
+    const input = document.createElement("textarea");
+    this.input = input;
+    input.dir = "auto";
+    input.value = this.value.text ?? "";
+    input.maxLength = 1e4;
+    input.setAttribute("aria-label", "Annotation text");
+    input.style.fontSize = (this.value.fontSize ?? 18) + "px";
+    const row = document.createElement("div");
+    row.className = "cv-annotation-actions";
+    const editButton = this.toolbar.querySelector(
+      '[aria-label="Edit annotation text"]'
+    );
+    if (editButton) editButton.hidden = true;
+    this.toolbar.append(row);
+    const finish = (save) => {
+      const text = input.value;
+      this.editing = false;
+      this.input = null;
+      this.root.classList.remove("is-editing");
+      row.remove();
+      if (editButton) editButton.hidden = false;
+      if (save && text !== this.value.text)
+        this.change({ ...this.value, text });
+      this.render();
+      this.root.focus({ preventScroll: true });
+    };
+    iconButton(row, "check", "Save annotation", () => finish(true));
+    iconButton(row, "x", "Cancel annotation edit", () => finish(false));
+    input.onkeydown = (e) => {
+      if (e.isComposing) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(true);
+      }
+    };
+    wrap.append(input);
+    this.visual.replaceChildren(wrap);
+    input.focus({ preventScroll: true });
+    input.select();
+    this.selection.position();
   }
   properties(type) {
     this.root.querySelector(".cv-property-popover")?.remove();
@@ -4977,10 +5387,18 @@ var DrawingObject = class {
     menu.setAttribute("role", "group");
     menu.setAttribute(
       "aria-label",
-      type === "color" ? "Stroke colors" : "Brush weights"
+      type === "all" ? "Object appearance settings" : type === "color" ? "Stroke colors" : "Brush weights"
     );
     this.toolbar.append(menu);
-    if (type === "color") {
+    if (type === "all") {
+      menu.classList.add("cv-full-properties");
+      stylePanel(
+        menu,
+        this.value.kind,
+        drawingStyle(this.value),
+        (patch) => this.change({ ...this.value, ...patch })
+      );
+    } else if (type === "color") {
       for (const color of [
         "currentColor",
         "#2783DE",
@@ -5020,10 +5438,20 @@ var DrawingObject = class {
     this.selection.position();
     const rect = this.view.scrollDOM.getBoundingClientRect();
     const bar = this.toolbar.getBoundingClientRect();
-    menu.style.left = Math.min(0, rect.right - 8 - bar.left - menu.offsetWidth) + "px";
+    menu.style.left = limit(
+      0,
+      rect.left + 8 - bar.left,
+      rect.right - 8 - bar.left - menu.offsetWidth
+    ) + "px";
+    menu.style.top = limit(
+      bar.height + 6,
+      rect.top + 8 - bar.top,
+      rect.bottom - 8 - bar.top - menu.offsetHeight
+    ) + "px";
   }
   gesture(e, h) {
     if (e.button !== 0) return;
+    this.toolbar.querySelector(".cv-property-popover")?.remove();
     this.select();
     this.cancelGesture?.();
     const start = { ...this.value };
@@ -5045,6 +5473,7 @@ var DrawingObject = class {
     });
   }
   key(e, h) {
+    if (e.target.closest("input,textarea,select")) return;
     if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault();
       e.stopPropagation();
@@ -5076,6 +5505,8 @@ var DrawingObject = class {
     this.selection.position();
   }
   destroy() {
+    if (this.editing && this.input && this.input.value !== this.value.text)
+      this.recover(this.input.value);
     this.cancelGesture?.();
     this.selection.remove(this);
     this.root.remove();
@@ -5283,6 +5714,27 @@ function createSpatialExtension(host) {
           host.app,
           {
             read: () => view.state.field(field),
+            getDefaults: () => host.store.toolDefaults ?? {},
+            saveDefault: (mode, style) => {
+              host.store.toolDefaults = {
+                ...host.store.toolDefaults,
+                [mode]: style
+              };
+              host.scheduleSave();
+            },
+            recover: (path, text) => {
+              host.store.recoveryDrafts ??= [];
+              host.store.recoveryDrafts.push({
+                id: crypto.randomUUID(),
+                path,
+                text,
+                savedAt: (/* @__PURE__ */ new Date()).toISOString()
+              });
+              host.scheduleSave();
+              host.notify(
+                "An unfinished annotation draft was saved. Use Canvesidian: Recover interrupted block drafts."
+              );
+            },
             setDrawings: (drawings) => view.dispatch({
               effects: action.of({ type: "drawings", drawings })
             }),
@@ -5944,7 +6396,7 @@ var FloatingBlock = class {
 
 // src/main.ts
 var Canvesidian = class extends import_obsidian4.Plugin {
-  store = { version: 3, notes: {} };
+  store = { version: 4, notes: {} };
   views = /* @__PURE__ */ new Set();
   dataReady = false;
   timer;

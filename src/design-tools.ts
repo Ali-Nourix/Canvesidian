@@ -1,4 +1,4 @@
-import { App, Modal } from "obsidian";
+import { App, Modal, setIcon } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import {
   Drawing,
@@ -6,6 +6,7 @@ import {
   drawingFromPoints,
   Placement,
   limit,
+  STICKERS,
 } from "./model";
 import {
   Selection,
@@ -16,6 +17,13 @@ import {
   previewGesture,
   resized,
 } from "./interaction";
+
+import {
+  defaultStyle,
+  stylePanel,
+  drawingStyle,
+  ToolStyle,
+} from "./tool-options";
 
 export function confirmAction(
   app: App,
@@ -61,6 +69,9 @@ export interface DesignCallbacks {
   };
   setDrawings: (next: Drawing[]) => void;
   reset: () => void;
+  getDefaults: () => Record<string, ToolStyle>;
+  saveDefault: (mode: string, style: ToolStyle) => void;
+  recover: (path: string, text: string) => void;
 }
 const NS = "http://www.w3.org/2000/svg";
 export function drawingSVG(d: Drawing) {
@@ -82,6 +93,12 @@ export function drawingSVG(d: Drawing) {
     shape.setAttribute("cy", String(d.height / 2));
     shape.setAttribute("rx", String(Math.max(1, d.width / 2 - 1)));
     shape.setAttribute("ry", String(Math.max(1, d.height / 2 - 1)));
+  } else if (d.kind === "diamond") {
+    shape = document.createElementNS(NS, "polygon");
+    shape.setAttribute(
+      "points",
+      `${d.width / 2},1 ${d.width - 1},${d.height / 2} ${d.width / 2},${d.height - 1} 1,${d.height / 2}`,
+    );
   } else {
     shape = document.createElementNS(NS, "path");
     const pts = d.points ?? [
@@ -98,7 +115,12 @@ export function drawingSVG(d: Drawing) {
         .join(" "),
     );
   }
-  shape.setAttribute("fill", "none");
+  shape.setAttribute(
+    "fill",
+    ["rect", "ellipse", "diamond"].includes(d.kind)
+      ? (d.fill ?? "none")
+      : "none",
+  );
   shape.setAttribute("stroke", d.stroke);
   shape.setAttribute("stroke-width", String(d.strokeWidth));
   shape.setAttribute("stroke-linecap", "round");
@@ -106,6 +128,29 @@ export function drawingSVG(d: Drawing) {
   shape.setAttribute("vector-effect", "non-scaling-stroke");
   shape.setAttribute("opacity", String(d.opacity));
   svg.append(shape);
+  if (d.kind === "arrow") {
+    const pts = d.points ?? [
+      [0, 0],
+      [1, 1],
+    ];
+    const a = pts[0],
+      b = pts[pts.length - 1];
+    const angle = Math.atan2((b[1] - a[1]) * d.height, (b[0] - a[0]) * d.width);
+    const size = Math.max(12, d.strokeWidth * 3);
+    const head = document.createElementNS(NS, "path");
+    const x = b[0] * d.width,
+      y = b[1] * d.height;
+    head.setAttribute(
+      "d",
+      `M${x - size * Math.cos(angle - 0.5)},${y - size * Math.sin(angle - 0.5)} L${x},${y} L${x - size * Math.cos(angle + 0.5)},${y - size * Math.sin(angle + 0.5)}`,
+    );
+    head.setAttribute("stroke", d.stroke);
+    head.setAttribute("stroke-width", String(d.strokeWidth));
+    head.setAttribute("fill", "none");
+    head.setAttribute("opacity", String(d.opacity));
+    head.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.append(head);
+  }
   return svg;
 }
 export class DesignTools {
@@ -118,6 +163,9 @@ export class DesignTools {
   private history: Drawing[][] = [];
   private future: Drawing[][] = [];
   private path = "";
+  private options = new Map<string, ToolStyle>();
+  private tray: HTMLElement;
+  private outside: (e: PointerEvent) => void;
   private scrollFrame = 0;
   private cleanups: (() => void)[] = [];
   constructor(
@@ -132,7 +180,20 @@ export class DesignTools {
     this.dock.className = "cv-tool-dock";
     this.dock.setAttribute("role", "toolbar");
     this.dock.setAttribute("aria-label", "Note design tools");
+    this.dock.dir = "ltr";
     view.dom.append(this.dock);
+    this.tray = document.createElement("div");
+    this.tray.className = "cv-tool-tray";
+    this.tray.hidden = true;
+    this.dock.append(this.tray);
+    this.outside = (e) => {
+      if (!(e.target as Element)?.closest(".cv-tool-dock"))
+        this.tray.hidden = true;
+    };
+    view.dom.addEventListener("pointerdown", this.outside);
+    this.cleanups.push(() =>
+      view.dom.removeEventListener("pointerdown", this.outside),
+    );
     const tools = [
       ["select", "mouse-pointer-2", "Select objects"],
       ["pen", "pencil", "Draw with pen"],
@@ -140,12 +201,24 @@ export class DesignTools {
       ["rect", "square", "Draw rectangle"],
       ["ellipse", "circle", "Draw ellipse"],
       ["line", "minus", "Draw line"],
+      ["diamond", "diamond", "Draw diamond"],
+      ["arrow", "arrow-up-right", "Draw arrow"],
+      ["sticky", "sticky-note", "Add sticky note"],
+      ["label", "tag", "Add label"],
+      ["sticker", "stamp", "Add sticker"],
     ];
     for (const [mode, icon, label] of tools) {
-      const b = iconButton(this.dock, icon, label, () => this.setMode(mode));
+      const b = iconButton(this.dock, icon, label, () => {
+        const close = this.mode === mode && !this.tray.hidden;
+        this.setMode(mode);
+        if (mode !== "select" && !close) this.openOptions();
+      });
       b.dataset.tool = mode;
       b.setAttribute("aria-pressed", mode === "select" ? "true" : "false");
     }
+    iconButton(this.dock, "sliders-horizontal", "Tool settings", () =>
+      this.openOptions(),
+    );
     this.dock.append(this.divider());
     iconButton(this.dock, "undo-2", "Undo drawing", () => this.undo());
     iconButton(this.dock, "redo-2", "Redo drawing", () => this.redo());
@@ -154,7 +227,7 @@ export class DesignTools {
       confirmAction(
         this.app,
         "Reset this note’s layout?",
-        "Return all floating blocks to normal text flow and remove all drawings in this note. Original Markdown text will not be deleted.",
+        "Return floating blocks to normal text flow and remove drawings, sticky notes, labels and stickers from this note. Original Markdown will not be deleted. Annotation text is stored in plugin data, not in Markdown.",
         "Reset layout",
         () => {
           this.setMode("select");
@@ -198,12 +271,13 @@ export class DesignTools {
     );
     const key = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest("textarea,input,.cm-content")) return;
+      if (target.closest("textarea,input,select,.cm-content")) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         this.disposeDrawing?.();
         this.setMode("select");
+        this.tray.hidden = true;
         this.selection.select(null);
       }
       if (
@@ -228,9 +302,43 @@ export class DesignTools {
     d.setAttribute("aria-hidden", "true");
     return d;
   }
+  private settings() {
+    if (!this.options.has(this.mode))
+      this.options.set(
+        this.mode,
+        this.cb.getDefaults()[this.mode] ?? defaultStyle(this.mode),
+      );
+    return this.options.get(this.mode)!;
+  }
+  private openOptions() {
+    if (this.mode === "select") {
+      this.tray.hidden = true;
+      return;
+    }
+    this.tray.replaceChildren();
+    const title = document.createElement("div");
+    title.className = "cv-tray-title";
+    title.textContent =
+      (
+        {
+          pen: "Pen",
+          highlighter: "Highlighter",
+          sticky: "Sticky note",
+          label: "Label",
+          sticker: "Stickers",
+        } as Record<string, string>
+      )[this.mode] ?? "Shape";
+    this.tray.append(title);
+    stylePanel(this.tray, this.mode, this.settings(), (patch) => {
+      this.options.set(this.mode, { ...this.settings(), ...patch });
+      this.cb.saveDefault(this.mode, this.settings());
+    });
+    this.tray.hidden = false;
+  }
   setMode(mode: string) {
     if (mode !== this.mode) this.disposeDrawing?.();
     this.mode = mode;
+    this.tray.hidden = true;
     this.layer.classList.toggle("is-drawing-mode", mode !== "select");
     if (mode !== "select") this.selection.select(null);
     for (const b of Array.from(
@@ -279,6 +387,7 @@ export class DesignTools {
             this.selection,
             (next) => this.change(next),
             () => this.remove(d.id),
+            (text) => this.cb.recover(state.path, text),
           );
           this.shapes.set(d.id, object);
         }
@@ -335,7 +444,29 @@ export class DesignTools {
     event.preventDefault();
     event.stopPropagation();
     this.disposeDrawing?.();
+    this.tray.hidden = true;
     const mode = this.mode;
+    const settings = { ...this.settings() };
+    if (["sticky", "label", "sticker"].includes(mode)) {
+      const [x, y] = this.point(event);
+      const value: Drawing = {
+        id: crypto.randomUUID(),
+        kind: mode as DrawingKind,
+        x,
+        y,
+        width: mode === "sticker" ? 80 : mode === "label" ? 180 : 240,
+        height: mode === "sticker" ? 80 : mode === "label" ? 64 : 200,
+        ...settings,
+        text:
+          mode === "sticky" ? "Your idea…" : mode === "label" ? "Label" : "",
+      };
+      this.commit([...this.cb.read().drawings, value]);
+      this.setMode("select");
+      const object = this.shapes.get(value.id);
+      this.selection.select(object ?? null);
+      if (mode !== "sticker") object?.editText();
+      return;
+    }
     const kind: DrawingKind =
       mode === "highlighter" ? "pen" : (mode as DrawingKind);
     const points: [number, number][] = [this.point(event)];
@@ -350,11 +481,12 @@ export class DesignTools {
       value = drawingFromPoints(
         kind,
         points,
-        mode === "highlighter" ? "#EAC26B" : "currentColor",
-        mode === "highlighter" ? 16 : 2,
-        mode === "highlighter" ? 0.35 : 1,
+        settings.stroke,
+        settings.strokeWidth,
+        settings.opacity,
       );
       if (!value || !this.draft) return;
+      value.fill = settings.fill;
       Object.assign(this.draft.style, {
         left: value.x + "px",
         top: value.y + "px",
@@ -424,6 +556,8 @@ class DrawingObject implements Selectable {
   toolbar: HTMLElement;
   id: string;
   private visual: HTMLElement;
+  private editing = false;
+  private input: HTMLTextAreaElement | null = null;
   private cancelGesture: (() => void) | null = null;
   constructor(
     public value: Drawing,
@@ -432,6 +566,7 @@ class DrawingObject implements Selectable {
     private selection: Selection,
     private change: (d: Drawing) => void,
     public remove: () => void,
+    private recover: (text: string) => void,
   ) {
     this.id = value.id;
     this.root = document.createElement("div");
@@ -450,11 +585,21 @@ class DrawingObject implements Selectable {
       this.select(),
     );
     grip.onpointerdown = (e) => this.gesture(e);
-    iconButton(this.toolbar, "palette", "Drawing color", () =>
-      this.properties("color"),
-    );
-    iconButton(this.toolbar, "sliders-horizontal", "Brush thickness", () =>
-      this.properties("width"),
+    grip.onkeydown = (e) => this.key(e);
+    if (!["sticky", "label", "sticker"].includes(value.kind)) {
+      iconButton(this.toolbar, "palette", "Drawing color", () =>
+        this.properties("color"),
+      );
+      iconButton(this.toolbar, "sliders-horizontal", "Brush thickness", () =>
+        this.properties("width"),
+      );
+    }
+    if (["sticky", "label"].includes(value.kind))
+      iconButton(this.toolbar, "pencil", "Edit annotation text", () =>
+        this.editText(),
+      );
+    iconButton(this.toolbar, "settings-2", "Object appearance", () =>
+      this.properties("all"),
     );
     const del = iconButton(this.toolbar, "trash-2", "Delete this drawing", () =>
       this.remove(),
@@ -469,11 +614,22 @@ class DrawingObject implements Selectable {
       (e, h) => this.key(e, h),
     );
     this.root.onpointerdown = (e) => {
-      if ((e.target as Element).closest("button,.cv-property-popover")) return;
+      if (
+        (e.target as Element).closest(
+          "button,input,textarea,.cv-property-popover",
+        )
+      )
+        return;
       this.gesture(e);
     };
+    this.root.ondblclick = () => this.editText();
     this.root.onkeydown = (e) => {
-      if (e.target instanceof HTMLButtonElement) return;
+      if (
+        e.target instanceof HTMLButtonElement ||
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
+        return;
       this.key(e);
     };
     this.root.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -493,17 +649,90 @@ class DrawingObject implements Selectable {
       width: value.width + "px",
       height: value.height + "px",
     });
-    if (
-      !this.visual.firstChild ||
-      old.kind !== value.kind ||
-      old.width !== value.width ||
-      old.height !== value.height ||
-      old.points !== value.points ||
-      old.stroke !== value.stroke ||
-      old.strokeWidth !== value.strokeWidth ||
-      old.opacity !== value.opacity
-    )
-      this.visual.replaceChildren(drawingSVG(value));
+    // Changes to geometry do not replace an in-progress text editor.
+    if (!this.editing && (!this.visual.firstChild || old !== value))
+      this.render();
+  }
+  private render() {
+    const d = this.value;
+    this.root.dataset.kind = d.kind;
+    if (d.kind === "sticky" || d.kind === "label") {
+      const text = document.createElement("div");
+      text.className = "cv-annotation-text";
+      text.dir = "auto";
+      text.textContent = d.text ?? "";
+      Object.assign(text.style, {
+        background: d.fill && d.fill !== "none" ? d.fill : "#FFF0AD",
+        color: d.stroke === "currentColor" ? "#2C2C2B" : d.stroke,
+        fontSize: (d.fontSize ?? 18) + "px",
+        opacity: String(d.opacity),
+      });
+      this.visual.replaceChildren(text);
+    } else if (d.kind === "sticker") {
+      const stamp = STICKERS.find((s) => s.id === d.sticker) ?? STICKERS[0];
+      const el = document.createElement("div");
+      el.className = "cv-stamp-art";
+      el.style.color = stamp.color;
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", stamp.label);
+      setIcon(el, stamp.icon);
+      this.visual.replaceChildren(el);
+    } else this.visual.replaceChildren(drawingSVG(d));
+  }
+  editText() {
+    if (this.editing || !["sticky", "label"].includes(this.value.kind)) return;
+    this.select();
+    this.editing = true;
+    this.root.classList.add("is-editing");
+    this.toolbar.querySelector(".cv-property-popover")?.remove();
+    const wrap = document.createElement("div");
+    wrap.className = "cv-annotation-edit";
+    const input = document.createElement("textarea");
+    this.input = input;
+    input.dir = "auto";
+    input.value = this.value.text ?? "";
+    input.maxLength = 10000;
+    input.setAttribute("aria-label", "Annotation text");
+    input.style.fontSize = (this.value.fontSize ?? 18) + "px";
+    const row = document.createElement("div");
+    row.className = "cv-annotation-actions";
+    const editButton = this.toolbar.querySelector<HTMLButtonElement>(
+      '[aria-label="Edit annotation text"]',
+    );
+    if (editButton) editButton.hidden = true;
+    this.toolbar.append(row);
+    const finish = (save: boolean) => {
+      const text = input.value;
+      this.editing = false;
+      this.input = null;
+      this.root.classList.remove("is-editing");
+      row.remove();
+      if (editButton) editButton.hidden = false;
+      if (save && text !== this.value.text)
+        this.change({ ...this.value, text });
+      this.render();
+      this.root.focus({ preventScroll: true });
+    };
+    iconButton(row, "check", "Save annotation", () => finish(true));
+    iconButton(row, "x", "Cancel annotation edit", () => finish(false));
+    input.onkeydown = (e) => {
+      if (e.isComposing) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(true);
+      }
+    };
+    wrap.append(input);
+    this.visual.replaceChildren(wrap);
+    input.focus({ preventScroll: true });
+    input.select();
+    this.selection.position();
   }
   private properties(type: string) {
     this.root.querySelector(".cv-property-popover")?.remove();
@@ -512,10 +741,19 @@ class DrawingObject implements Selectable {
     menu.setAttribute("role", "group");
     menu.setAttribute(
       "aria-label",
-      type === "color" ? "Stroke colors" : "Brush weights",
+      type === "all"
+        ? "Object appearance settings"
+        : type === "color"
+          ? "Stroke colors"
+          : "Brush weights",
     );
     this.toolbar.append(menu);
-    if (type === "color") {
+    if (type === "all") {
+      menu.classList.add("cv-full-properties");
+      stylePanel(menu, this.value.kind, drawingStyle(this.value), (patch) =>
+        this.change({ ...this.value, ...patch }),
+      );
+    } else if (type === "color") {
       for (const color of [
         "currentColor",
         "#2783DE",
@@ -556,10 +794,21 @@ class DrawingObject implements Selectable {
     const rect = this.view.scrollDOM.getBoundingClientRect();
     const bar = this.toolbar.getBoundingClientRect();
     menu.style.left =
-      Math.min(0, rect.right - 8 - bar.left - menu.offsetWidth) + "px";
+      limit(
+        0,
+        rect.left + 8 - bar.left,
+        rect.right - 8 - bar.left - menu.offsetWidth,
+      ) + "px";
+    menu.style.top =
+      limit(
+        bar.height + 6,
+        rect.top + 8 - bar.top,
+        rect.bottom - 8 - bar.top - menu.offsetHeight,
+      ) + "px";
   }
   private gesture(e: PointerEvent, h?: Handle) {
     if (e.button !== 0) return;
+    this.toolbar.querySelector(".cv-property-popover")?.remove();
     this.select();
     this.cancelGesture?.();
     const start = { ...this.value };
@@ -584,6 +833,7 @@ class DrawingObject implements Selectable {
     });
   }
   private key(e: KeyboardEvent, h?: Handle) {
+    if ((e.target as Element).closest("input,textarea,select")) return;
     if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault();
       e.stopPropagation();
@@ -617,6 +867,8 @@ class DrawingObject implements Selectable {
     this.selection.position();
   }
   destroy() {
+    if (this.editing && this.input && this.input.value !== this.value.text)
+      this.recover(this.input.value);
     this.cancelGesture?.();
     this.selection.remove(this);
     this.root.remove();
