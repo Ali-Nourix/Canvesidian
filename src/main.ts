@@ -16,7 +16,7 @@ import {
 } from "./spatial";
 
 export default class Canvesidian extends Plugin implements SpatialHost {
-  store: InlineStore = { version: 2, notes: {} };
+  store: InlineStore = { version: 3, notes: {} };
   views = new Set<EditorView>();
   private dataReady = false;
   private timer: ReturnType<typeof setTimeout> | undefined;

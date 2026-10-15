@@ -46,6 +46,10 @@ function mount(doc = original) {
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
       w.extension,
+      EditorView.updateListener.of((update) => {
+        w.transactionCount =
+          (w.transactionCount ?? 0) + update.transactions.length;
+      }),
     ],
   });
   const view = new EditorView({ state, parent });

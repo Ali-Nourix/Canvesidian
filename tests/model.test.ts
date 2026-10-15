@@ -135,3 +135,14 @@ test("interrupted drafts survive serialization and corrupt drafts are filtered",
   assert.equal(value.recoveryDrafts?.length, 1);
   assert.equal(value.recoveryDrafts?.[0].text, "متن ذخیره‌نشده");
 });
+
+test("v2 data migrates to v3 without losing existing block placement", () => {
+  const saved = capture(pin("Hi"), "Hi");
+  const value = normalize({
+    version: 2,
+    notes: { "note.md": { pins: [saved] } },
+  });
+  assert.equal(value.version, 3);
+  assert.equal(value.notes["note.md"].pins[0].text, "Hi");
+  assert.deepEqual(value.notes["note.md"].drawings, []);
+});

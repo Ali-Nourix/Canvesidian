@@ -20,9 +20,11 @@ import {
   editorInfoField,
   editorLivePreviewField,
   App,
+  setIcon,
 } from "obsidian";
 import {
   Pin,
+  Drawing,
   SavedPin,
   InlineStore,
   blockAt,
@@ -31,6 +33,17 @@ import {
   restore,
   limit,
 } from "./model";
+
+import {
+  Selection,
+  Selectable,
+  iconButton,
+  addHandles,
+  Handle,
+  resized,
+  previewGesture,
+} from "./interaction";
+import { DesignTools, confirmAction } from "./design-tools";
 
 export interface SpatialHost {
   app: App;
@@ -45,6 +58,7 @@ interface SpatialState {
   live: boolean;
   pins: Pin[];
   detached: SavedPin[];
+  drawings: Drawing[];
   decorations: DecorationSet;
 }
 type Action =
@@ -55,7 +69,9 @@ type Action =
       id: string;
       placement: Partial<Pick<Pin, "x" | "y" | "width" | "height">>;
     }
-  | { type: "toggle" };
+  | { type: "toggle" }
+  | { type: "drawings"; drawings: Drawing[] }
+  | { type: "reset" };
 const action = StateEffect.define<Action>();
 // Each host owns its field; a WeakMap keeps public test/command helpers independent of private Obsidian APIs.
 const fields = new WeakMap<EditorView, StateField<SpatialState>>();
@@ -98,8 +114,23 @@ class Space extends WidgetType {
     return true;
   }
 }
+function reserve(value: SpatialState) {
+  return (
+    Math.ceil(
+      Math.max(
+        800,
+        ...value.pins.map((p) => p.y + p.height + 120),
+        ...value.drawings.map((d) => d.y + d.height + 120),
+      ) / 512,
+    ) * 512
+  );
+}
 function decorate(value: SpatialState, length: number) {
-  if (!value.enabled || !value.live || !value.pins.length)
+  if (
+    !value.enabled ||
+    !value.live ||
+    (!value.pins.length && !value.drawings.length)
+  )
     return Decoration.none;
   const ranges = value.pins.map((p) =>
     Decoration.replace({ block: true, widget: new Hidden() }).range(
@@ -107,12 +138,12 @@ function decorate(value: SpatialState, length: number) {
       p.to,
     ),
   );
-  const reserve = Math.max(800, ...value.pins.map((p) => p.y + p.height + 120));
+  const height = reserve(value);
   ranges.push(
     Decoration.widget({
       block: true,
       side: 1,
-      widget: new Space(reserve),
+      widget: new Space(height),
     }).range(length),
   );
   return Decoration.set(ranges, true);
@@ -127,6 +158,7 @@ export function createSpatialExtension(host: SpatialHost): Extension {
         path,
         enabled: saved?.enabled ?? true,
         live: live(state),
+        drawings: saved?.drawings ?? [],
         ...restored,
         decorations: Decoration.none,
       };
@@ -134,18 +166,28 @@ export function createSpatialExtension(host: SpatialHost): Extension {
       return value;
     },
     update(old, tr) {
+      const path = pathOf(tr.state);
+      const isLive = live(tr.state);
+      const effects = tr.effects.filter((e) => e.is(action));
+      if (
+        !tr.docChanged &&
+        !effects.length &&
+        path === old.path &&
+        isLive === old.live
+      )
+        return old;
       let value: SpatialState = {
         ...old,
         pins: old.pins,
         live: live(tr.state),
       };
-      const path = pathOf(tr.state);
       if (path !== old.path) {
         const saved = host.store.notes[path];
         value = {
           ...value,
           path,
           enabled: saved?.enabled ?? true,
+          drawings: saved?.drawings ?? [],
           ...restore(saved?.pins ?? [], tr.state.doc.toString()),
         };
       } else if (tr.docChanged) {
@@ -197,12 +239,30 @@ export function createSpatialExtension(host: SpatialHost): Extension {
             ),
           };
         if (a.type === "toggle") value = { ...value, enabled: !value.enabled };
+        if (a.type === "drawings")
+          value = { ...value, drawings: a.drawings, enabled: true };
+        if (a.type === "reset")
+          value = {
+            ...value,
+            pins: [],
+            detached: [],
+            drawings: [],
+            enabled: true,
+          };
       }
-      if (
+      const sourceRangesChanged =
         tr.docChanged ||
-        tr.effects.some((e) => e.is(action)) ||
         path !== old.path ||
-        value.live !== old.live
+        effects.some(
+          (e) =>
+            e.is(action) &&
+            ["add", "remove", "reset", "toggle"].includes(e.value.type),
+        );
+      if (
+        sourceRangesChanged ||
+        value.live !== old.live ||
+        reserve(value) !== reserve(old) ||
+        !old.drawings.length !== !value.drawings.length
       )
         value.decorations = decorate(value, tr.state.doc.length);
       return value;
@@ -224,8 +284,15 @@ export function createSpatialExtension(host: SpatialHost): Extension {
       layer: HTMLElement;
       handle: HTMLButtonElement;
       cards = new Map<string, FloatingBlock>();
+      selection: Selection;
+      tools: DesignTools;
+      private cachedDoc: unknown = null;
+      private cachedSource = "";
+      private savedPins = new Map<string, SavedPin>();
       hoverPos: number | null = null;
       destroyed = false;
+      private hoverFrame = 0;
+      private hoverEvent: MouseEvent | null = null;
       private parsedDoc: unknown = null;
       private parsedBlocks: ReturnType<typeof blocks> = [];
       constructor(public view: EditorView) {
@@ -236,9 +303,25 @@ export function createSpatialExtension(host: SpatialHost): Extension {
         this.layer.className = "cv-spatial-layer";
         this.layer.contentEditable = "false";
         view.scrollDOM.append(this.layer);
+        this.selection = new Selection(view.scrollDOM);
+        this.tools = new DesignTools(
+          view,
+          this.layer,
+          this.selection,
+          host.app,
+          {
+            read: () => view.state.field(field),
+            setDrawings: (drawings) =>
+              view.dispatch({
+                effects: action.of({ type: "drawings", drawings }),
+              }),
+            reset: () =>
+              view.dispatch({ effects: action.of({ type: "reset" }) }),
+          },
+        );
         this.handle = document.createElement("button");
         this.handle.className = "cv-float-handle";
-        this.handle.textContent = "::";
+        setIcon(this.handle, "grip-vertical");
         this.handle.title = "Drag this block out of the text flow";
         this.handle.setAttribute("aria-label", "Float block under pointer");
         this.layer.append(this.handle);
@@ -266,6 +349,7 @@ export function createSpatialExtension(host: SpatialHost): Extension {
           if (
             update.docChanged ||
             before.pins !== next.pins ||
+            before.drawings !== next.drawings ||
             before.enabled !== next.enabled ||
             before.path !== next.path
           )
@@ -287,13 +371,21 @@ export function createSpatialExtension(host: SpatialHost): Extension {
           for (const pin of state.pins) {
             let card = this.cards.get(pin.id);
             if (!card) {
-              card = new FloatingBlock(this.view, host, pin, this.layer, () =>
-                this.persist(),
+              card = new FloatingBlock(
+                this.view,
+                host,
+                pin,
+                this.layer,
+                () => this.persist(),
+                this.selection,
               );
               this.cards.set(pin.id, card);
+              this.selection.select(card);
             }
-            card.update(pin);
+            if (card.pin !== pin || !card.root.style.width) card.update(pin);
           }
+        this.tools.sync();
+        this.selection.position();
         if (initial && state.detached.length)
           host.notify(
             `${state.detached.length} Canvesidian placement(s) could not be matched safely. Their text remains visible; saved placement has been retained.`,
@@ -302,19 +394,38 @@ export function createSpatialExtension(host: SpatialHost): Extension {
       persist() {
         const state = this.view.state.field(field);
         if (!state.path) return;
-        const source = this.view.state.doc.toString();
+        const changed = this.cachedDoc !== this.view.state.doc;
+        if (changed) {
+          this.cachedDoc = this.view.state.doc;
+          this.cachedSource = this.view.state.doc.toString();
+          this.savedPins.clear();
+        }
+        const currentIds = new Set(state.pins.map((p) => p.id));
+        for (const id of this.savedPins.keys())
+          if (!currentIds.has(id)) this.savedPins.delete(id);
+        const saved = state.pins.map((p) => {
+          const previous = this.savedPins.get(p.id);
+          const value = previous
+            ? { ...previous, ...p }
+            : capture(p, this.cachedSource);
+          this.savedPins.set(p.id, value);
+          return value;
+        });
         host.store.notes[state.path] = {
           enabled: state.enabled,
-          pins: [
-            ...state.pins.map((p) => capture(p, source)),
-            ...state.detached,
-          ],
+          pins: [...saved, ...state.detached],
+          drawings: state.drawings,
         };
         host.scheduleSave();
       }
       hover(event: MouseEvent) {
         const state = this.view.state.field(field);
-        if (!state.enabled || !state.live) return;
+        if (
+          !state.enabled ||
+          !state.live ||
+          this.view.scrollDOM.classList.contains("cv-has-gesture")
+        )
+          return;
         if (
           !(event.target instanceof HTMLElement) ||
           !event.target.closest(".cm-content") ||
@@ -353,11 +464,21 @@ export function createSpatialExtension(host: SpatialHost): Extension {
           coords.top - rect.top + this.view.scrollDOM.scrollTop + "px";
         this.handle.hidden = false;
       }
+      queueHover(event: MouseEvent) {
+        this.hoverEvent = event;
+        if (!this.hoverFrame)
+          this.hoverFrame = requestAnimationFrame(() => {
+            this.hoverFrame = 0;
+            if (this.hoverEvent && !this.destroyed) this.hover(this.hoverEvent);
+          });
+      }
       destroy() {
+        cancelAnimationFrame(this.hoverFrame);
         this.destroyed = true;
         this.persist();
         this.cards.forEach((c) => c.destroy());
         this.cards.clear();
+        this.tools.destroy();
         this.layer.remove();
         this.view.scrollDOM.classList.remove("cv-spatial-scroller");
         host.views.delete(this.view);
@@ -367,12 +488,16 @@ export function createSpatialExtension(host: SpatialHost): Extension {
     {
       eventHandlers: {
         mousemove(event) {
-          this.hover(event);
+          this.queueHover(event);
         },
       },
     },
   );
-  return [Prec.high(field), plugin];
+  return [
+    EditorView.editorAttributes.of({ class: "cv-design-editor" }),
+    Prec.high(field),
+    plugin,
+  ];
 }
 export function toggleSpatial(view: EditorView) {
   if (fields.has(view))
@@ -443,16 +568,21 @@ export function floatAt(
       (p) =>
         pin.x < p.x + p.width + 16 &&
         pin.x + pin.width + 16 > p.x &&
-        pin.y < p.y + p.height + 24 &&
-        pin.y + pin.height + 24 > p.y,
+        pin.y < p.y + p.height + 72 &&
+        pin.y + pin.height + 72 > p.y,
     );
     if (!overlap) break;
-    pin.y = limit(overlap.y + overlap.height + 24, 8, 50000);
+    pin.y = limit(overlap.y + overlap.height + 72, 8, 50000);
   }
   view.dispatch({ effects: action.of({ type: "add", pin }) });
   return pin;
 }
-class FloatingBlock {
+class FloatingBlock implements Selectable {
+  id: string;
+  toolbar: HTMLElement;
+  private editButton: HTMLButtonElement;
+  private commitDraft: (() => boolean) | null = null;
+  private dragging = false;
   root: HTMLElement;
   body: HTMLElement;
   grip: HTMLButtonElement;
@@ -475,46 +605,96 @@ class FloatingBlock {
     pin: Pin,
     parent: HTMLElement,
     private persist: () => void,
+    private selection: Selection,
   ) {
     this.pin = pin;
+    this.id = pin.id;
     this.path = this.view.state.field(fields.get(this.view)!).path;
     this.root = document.createElement("article");
     this.root.className = "cv-floating-block";
     this.root.setAttribute("aria-label", "Floating block in this note");
     this.root.contentEditable = "false";
+    this.root.tabIndex = 0;
+    this.root.onfocus = () => this.selection.select(this);
+    this.root.addEventListener("focusin", () => this.selection.select(this));
     parent.append(this.root);
     const toolbar = document.createElement("div");
-    toolbar.className = "cv-floating-toolbar";
+    this.toolbar = toolbar;
+    toolbar.className = "cv-context-toolbar";
+    toolbar.setAttribute("role", "toolbar");
+    toolbar.setAttribute("aria-label", "Selected text tools");
     this.root.append(toolbar);
-    this.grip = this.button(toolbar, "::", "Move this block", () => {});
-    this.grip.className = "cv-block-grip";
+    this.grip = iconButton(toolbar, "move", "Move this block", () =>
+      this.select(),
+    );
+    this.grip.classList.add("cv-block-grip");
     this.grip.onpointerdown = (e) => this.beginDrag(e);
     this.grip.onkeydown = (e) => this.nudge(e, false);
-    this.button(toolbar, "Edit", "Edit text in place", () => this.edit());
-    this.button(toolbar, "Return", "Return block to normal text flow", () => {
-      const from = this.pin.from;
-      this.dispatch({ type: "remove", id: this.pin.id });
-      this.view.dispatch({
-        selection: { anchor: Math.min(from, this.view.state.doc.length) },
-        scrollIntoView: true,
-      });
-      this.view.focus();
-    });
+    this.editButton = iconButton(
+      toolbar,
+      "pencil",
+      "Edit text in place",
+      () => {
+        this.select();
+        if (this.textarea) {
+          if (this.commitDraft?.()) this.finishEdit();
+        } else this.edit();
+      },
+    );
+    iconButton(
+      toolbar,
+      "corner-up-left",
+      "Return block to normal text flow",
+      () => {
+        const from = this.pin.from;
+        this.dispatch({ type: "remove", id: this.pin.id });
+        this.view.dispatch({
+          selection: { anchor: Math.min(from, this.view.state.doc.length) },
+          scrollIntoView: true,
+        });
+        this.view.focus();
+      },
+    );
+    const del = iconButton(
+      toolbar,
+      "trash-2",
+      "Delete this block from note",
+      () => this.remove(),
+    );
+    del.classList.add("cv-danger");
     this.body = document.createElement("div");
     this.body.className = "cv-floating-body markdown-rendered";
     this.body.dir = "auto";
     this.body.ondblclick = () => this.edit();
     this.root.append(this.body);
-    this.resize = this.button(this.root, "↔", "Resize block", () => {});
-    this.resize.className = "cv-block-resize";
-    this.resize.onpointerdown = (e) => this.drag(e, true);
-    this.resize.onkeydown = (e) => this.nudge(e, true);
+    addHandles(
+      this.root,
+      (e, h) => this.drag(e, h),
+      (e) => this.nudge(e, true),
+    );
+    this.resize = this.root.querySelector(".cv-handle-se") as HTMLButtonElement;
+    this.root.onpointerdown = (e) => {
+      if ((e.target as Element).closest("button,textarea,input,a")) return;
+      this.beginDrag(e);
+    };
+    this.root.onkeydown = (e) => {
+      if ((e.target as Element).closest("textarea,input,button")) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        this.remove();
+      } else if (e.key === "Escape") this.selection.select(null);
+      else this.nudge(e, false);
+    };
     this.root.addEventListener("keydown", (e) => e.stopPropagation());
     this.root.addEventListener("pointerdown", (e) => e.stopPropagation());
     this.root.addEventListener("mousedown", (e) => e.stopPropagation());
     this.root.addEventListener("input", (e) => e.stopPropagation());
-    this.observer = new ResizeObserver(() => {
-      const height = Math.ceil(this.root.getBoundingClientRect().height);
+    this.observer = new ResizeObserver((entries) => {
+      if (this.dragging) return;
+      const height = Math.ceil(
+        entries[0].borderBoxSize?.[0]?.blockSize ??
+          entries[0].contentRect.height,
+      );
       if (Math.abs(height - this.pin.height) > 2 && height > 0) {
         cancelAnimationFrame(this.sizeFrame);
         this.sizeFrame = requestAnimationFrame(() => {
@@ -529,21 +709,6 @@ class FloatingBlock {
     });
     this.observer.observe(this.root);
   }
-  private button(
-    parent: HTMLElement,
-    text: string,
-    label: string,
-    fn: () => void,
-  ) {
-    const button = document.createElement("button");
-    button.textContent = text;
-    button.type = "button";
-    button.title = label;
-    button.setAttribute("aria-label", label);
-    button.onclick = fn;
-    parent.append(button);
-    return button;
-  }
   private dispatch(a: Action) {
     this.view.dispatch({ effects: action.of(a) });
   }
@@ -552,7 +717,7 @@ class FloatingBlock {
     this.root.style.left = pin.x + "px";
     this.root.style.top = pin.y + "px";
     this.root.style.width = pin.width + "px";
-    const source = this.view.state.doc.sliceString(pin.from, pin.to);
+    const source = pin.text;
     if (this.textarea) {
       if (source !== this.draftBase) {
         if (
@@ -574,7 +739,7 @@ class FloatingBlock {
           );
         }
       }
-      this.sizeInput();
+      if (source !== this.draftBase) this.sizeInput();
       return;
     }
     if (this.lastText !== source) {
@@ -604,7 +769,30 @@ class FloatingBlock {
       console.error("Canvesidian block renderer", e);
     }
   }
+  position = () => this.pin;
+  private select() {
+    this.selection.select(this);
+    this.root.focus({ preventScroll: true });
+  }
+  remove = () => {
+    confirmAction(
+      this.host.app,
+      "Delete this block?",
+      "This removes the block’s Markdown from this note. Text undo can restore it. Returning a block to normal flow is a separate action.",
+      "Delete block",
+      () => {
+        if (!this.root.isConnected) return;
+        this.view.dispatch({
+          changes: { from: this.pin.from, to: this.pin.to, insert: "" },
+          effects: action.of({ type: "remove", id: this.pin.id }),
+          annotations: Transaction.userEvent.of("delete.selection"),
+        });
+        this.view.focus();
+      },
+    );
+  };
   private edit() {
+    this.selection.select(this);
     if (this.textarea) {
       this.textarea.focus();
       return;
@@ -670,15 +858,10 @@ class FloatingBlock {
         if (commit()) this.finishEdit();
       }
     };
-    const done = this.button(
-      this.body,
-      "Done",
-      "Finish editing this block",
-      () => {
-        if (commit()) this.finishEdit();
-      },
-    );
-    done.className = "cv-done";
+    this.commitDraft = commit;
+    setIcon(this.editButton, "check");
+    this.editButton.setAttribute("aria-label", "Finish editing this block");
+    this.editButton.title = "Finish editing this block";
     this.sizeInput();
     input.focus();
   }
@@ -701,6 +884,10 @@ class FloatingBlock {
   }
   private finishEdit() {
     this.composing = false;
+    this.commitDraft = null;
+    setIcon(this.editButton, "pencil");
+    this.editButton.setAttribute("aria-label", "Edit text in place");
+    this.editButton.title = "Edit text in place";
     this.textarea = null;
     this.body.replaceChildren();
     this.lastText = null;
@@ -708,6 +895,7 @@ class FloatingBlock {
     this.grip.focus({ preventScroll: true });
   }
   beginDrag(event: PointerEvent, alignToPointer = false) {
+    this.select();
     if (alignToPointer) {
       const rect = this.view.scrollDOM.getBoundingClientRect();
       this.dispatch({
@@ -727,7 +915,7 @@ class FloatingBlock {
         },
       });
     }
-    this.drag(event, false);
+    this.drag(event);
   }
   private nudge(e: KeyboardEvent, resize: boolean) {
     const d: Record<string, number[]> = {
@@ -750,56 +938,45 @@ class FloatingBlock {
           },
     });
   }
-  private drag(e: PointerEvent, resize: boolean) {
+  private drag(e: PointerEvent, handle?: Handle) {
     if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
+    this.select();
     this.cleanupDrag?.();
-    const start = {
-      x: e.clientX,
-      y: e.clientY,
-      left: this.pin.x,
-      top: this.pin.y,
-      width: this.pin.width,
-      sx: this.view.scrollDOM.scrollLeft,
-      sy: this.view.scrollDOM.scrollTop,
-    };
-    const move = (event: PointerEvent) => {
-      if (event.pointerId !== e.pointerId) return;
-      const dx =
-        event.clientX - start.x + this.view.scrollDOM.scrollLeft - start.sx;
-      const dy =
-        event.clientY - start.y + this.view.scrollDOM.scrollTop - start.sy;
-      this.dispatch({
-        type: "place",
-        id: this.pin.id,
-        placement: resize
-          ? { width: limit(start.width + dx, 200, 1200) }
-          : {
-              x: limit(start.left + dx, 0, 50000),
-              y: limit(start.top + dy, 0, 50000),
-            },
-      });
-    };
-    const end = (event?: PointerEvent) => {
-      if (event && event.pointerId !== e.pointerId) return;
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-      window.removeEventListener("blur", blur);
-      this.cleanupDrag = null;
-      this.persist();
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
-    const blur = () => end();
-    window.addEventListener("blur", blur, { once: true });
-    this.cleanupDrag = () => {
-      window.removeEventListener("blur", blur);
-      end();
-    };
-    this.grip.focus({ preventScroll: true });
+    this.dragging = true;
+    const start = { ...this.pin };
+    this.cleanupDrag = previewGesture(e, {
+      scroller: this.view.scrollDOM,
+      root: this.root,
+      start,
+      project: (dx, dy) => {
+        if (!handle)
+          return {
+            ...start,
+            x: limit(start.x + dx, 0, 50000),
+            y: limit(start.y + dy, 0, 50000),
+          };
+        const horizontal = handle.includes("w") ? "w" : "e";
+        const next = resized(start, dx, 0, horizontal, 200, 24);
+        return { ...next, y: start.y, height: start.height };
+      },
+      commit: (p) => {
+        this.dispatch({
+          type: "place",
+          id: this.pin.id,
+          placement: {
+            x: p.x,
+            y: p.y,
+            width: p.width,
+            height: Math.ceil(this.root.offsetHeight),
+          },
+        });
+        this.selection.position();
+      },
+      end: () => {
+        this.dragging = false;
+        this.cleanupDrag = null;
+      },
+    });
   }
   destroy() {
     if (this.textarea && this.textarea.value !== this.draftBase) {
@@ -824,6 +1001,7 @@ class FloatingBlock {
     this.cleanupDrag?.();
     this.observer.disconnect();
     this.life?.unload();
+    this.selection.remove(this);
     this.root.remove();
   }
 }

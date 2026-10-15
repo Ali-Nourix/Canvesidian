@@ -1,14 +1,15 @@
 {
   "name": "canvesidian",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Float existing Markdown blocks inside the same Obsidian note",
+  "description": "Fast same-note design selection, contextual tools, and vector drawing for Obsidian",
   "scripts": {
     "build": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "test:ui": "node qa/build.mjs && node qa/browser-test.mjs",
-    "check": "npm run typecheck && npm test && npm run build"
+    "test:ui": "node qa/build.mjs && node qa/browser-test.mjs && node qa/design-test.mjs",
+    "check": "npm run typecheck && npm test && npm run build",
+    "benchmark": "node qa/build.mjs && node qa/benchmark.mjs"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.11.1",

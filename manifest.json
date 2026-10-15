@@ -1,9 +1,9 @@
 {
   "id": "canvesidian",
   "name": "Canvesidian",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "minAppVersion": "1.8.0",
-  "description": "Move and edit existing blocks freely inside the same note in Live Preview.",
+  "description": "Arrange existing note blocks, use contextual design tools, and draw vectors in Live Preview.",
   "author": "Ali-Nourix",
   "isDesktopOnly": false
 }

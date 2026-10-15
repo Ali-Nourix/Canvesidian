@@ -1,0 +1,8 @@
+{
+  "pointerMoves": 120,
+  "transactionsDuringMove": 0,
+  "transactionsAfterRelease": 1,
+  "elapsedMs": 2071,
+  "note": "Synthetic Chromium harness, one floating block; wall time includes Playwright input pacing and is not an FPS measurement.",
+  "pluginVersion": "0.3.0"
+}

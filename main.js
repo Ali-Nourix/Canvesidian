@@ -24,7 +24,7 @@ __export(main_exports, {
   default: () => Canvesidian
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian2 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // node_modules/@lezer/common/dist/index.js
 var DefaultBufferLength = 1024;
@@ -3355,7 +3355,7 @@ var Buffer2 = class {
     });
   }
 };
-var Element = class {
+var Element2 = class {
   /**
   @internal
   */
@@ -3403,7 +3403,7 @@ var TreeElement = class {
   }
 };
 function elt(type, from, to, children) {
-  return new Element(type, from, to, children);
+  return new Element2(type, from, to, children);
 }
 var EmphasisUnderscore = { resolve: "Emphasis", mark: "EmphasisMark" };
 var EmphasisAsterisk = { resolve: "Emphasis", mark: "EmphasisMark" };
@@ -3750,7 +3750,7 @@ var InlineContext = class {
       if (open.type.mark)
         content2.push(this.elt(open.type.mark, start, open.to));
       for (let k = j + 1; k < i; k++) {
-        if (this.parts[k] instanceof Element)
+        if (this.parts[k] instanceof Element2)
           content2.push(this.parts[k]);
         this.parts[k] = null;
       }
@@ -3767,7 +3767,7 @@ var InlineContext = class {
     let result = [];
     for (let i = from; i < this.parts.length; i++) {
       let part = this.parts[i];
-      if (part instanceof Element)
+      if (part instanceof Element2)
         result.push(part);
     }
     return result;
@@ -3836,8 +3836,8 @@ function injectMarks(elements, marks) {
       eI++;
     if (eI < elts.length && elts[eI].from < mark.from) {
       let e = elts[eI];
-      if (e instanceof Element)
-        elts[eI] = new Element(e.type, e.from, e.to, injectMarks(e.children, [mark]));
+      if (e instanceof Element2)
+        elts[eI] = new Element2(e.type, e.from, e.to, injectMarks(e.children, [mark]));
     } else {
       elts.splice(eI++, 0, mark);
     }
@@ -4289,14 +4289,14 @@ function restore(saved, source) {
   return { pins, detached };
 }
 function normalize(raw) {
-  const result = { version: 2, notes: {} };
+  const result = { version: 3, notes: {} };
   if (!raw || typeof raw !== "object") return result;
   const object = raw;
   if (object.version === 1) {
     result.legacyBoards = object.boards;
     return result;
   }
-  if (object.version !== 2)
+  if (object.version !== 2 && object.version !== 3)
     throw new Error(
       "Unsupported Canvesidian data version. Existing layout data was not overwritten."
     );
@@ -4311,6 +4311,7 @@ function normalize(raw) {
     if (!Array.isArray(note?.pins)) continue;
     result.notes[path] = {
       enabled: note.enabled !== false,
+      drawings: normalizeDrawings(note.drawings),
       pins: note.pins.filter(
         (p) => p && typeof p.id === "string" && typeof p.text === "string" && typeof p.before === "string" && typeof p.after === "string" && [p.from, p.to, p.x, p.y, p.width, p.height].every(
           Number.isFinite
@@ -4326,16 +4327,766 @@ function normalize(raw) {
   }
   return result;
 }
+var validStroke = (s) => s === "currentColor" || typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s);
+function normalizeDrawings(raw) {
+  if (!Array.isArray(raw)) return [];
+  const ids = /* @__PURE__ */ new Set();
+  return raw.filter(
+    (d) => d && typeof d.id === "string" && !ids.has(d.id) && (ids.add(d.id), true) && ["pen", "rect", "ellipse", "line"].includes(d.kind) && [d.x, d.y, d.width, d.height, d.strokeWidth, d.opacity].every(
+      Number.isFinite
+    ) && validStroke(d.stroke) && (d.kind !== "pen" || Array.isArray(d.points))
+  ).map((d) => ({
+    ...d,
+    x: limit(d.x, 0, 5e4),
+    y: limit(d.y, 0, 5e4),
+    width: limit(d.width, 2, 1e4),
+    height: limit(d.height, 2, 1e4),
+    strokeWidth: limit(d.strokeWidth, 1, 32),
+    opacity: limit(d.opacity, 0.1, 1),
+    points: (Array.isArray(d.points) ? d.points : void 0)?.filter(
+      (p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)
+    ).slice(0, 5e3).map((p) => [limit(p[0], 0, 1), limit(p[1], 0, 1)])
+  }));
+}
+function drawingFromPoints(kind, world, stroke = "currentColor", strokeWidth = 2, opacity = 1) {
+  if (world.length < 2) return null;
+  let points = world.filter(
+    (p, i) => i === 0 || i === world.length - 1 || Math.hypot(p[0] - world[i - 1][0], p[1] - world[i - 1][1]) >= 1.5
+  ).slice(0, 5e3);
+  if (points.length < 2) points = [world[0], world[world.length - 1]];
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const x = Math.min(...xs), y = Math.min(...ys), width = Math.max(2, Math.max(...xs) - x), height = Math.max(2, Math.max(...ys) - y);
+  if (width < 3 && height < 3) return null;
+  return {
+    id: crypto.randomUUID(),
+    kind,
+    x,
+    y,
+    width,
+    height,
+    stroke,
+    strokeWidth,
+    opacity,
+    points: points.map((p) => [(p[0] - x) / width, (p[1] - y) / height])
+  };
+}
+function resized(start, dx, dy, handle, minWidth = 24, minHeight = 24) {
+  let left = start.x, top = start.y, right = left + start.width, bottom = top + start.height;
+  if (handle.includes("w")) left = limit(left + dx, 0, right - minWidth);
+  if (handle.includes("e")) right = limit(right + dx, left + minWidth, 51200);
+  if (handle.includes("n")) top = limit(top + dy, 0, bottom - minHeight);
+  if (handle.includes("s")) bottom = limit(bottom + dy, top + minHeight, 6e4);
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
 
 // src/spatial.ts
 var import_state = require("@codemirror/state");
 var import_view = require("@codemirror/view");
 var import_commands = require("@codemirror/commands");
+var import_obsidian3 = require("obsidian");
+
+// src/interaction.ts
 var import_obsidian = require("obsidian");
+function iconButton(parent, icon, label, callback) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "cv-icon-button";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  (0, import_obsidian.setIcon)(button, icon);
+  button.onclick = callback;
+  parent.append(button);
+  return button;
+}
+function previewGesture(event, options) {
+  event.preventDefault();
+  event.stopPropagation();
+  const { scroller, root, start } = options;
+  const origin = {
+    x: event.clientX,
+    y: event.clientY,
+    sx: scroller.scrollLeft,
+    sy: scroller.scrollTop
+  };
+  let current = { ...start };
+  let frame = 0;
+  let done = false;
+  root.classList.add("is-transforming");
+  scroller.classList.add("cv-has-gesture");
+  const paint = () => {
+    frame = 0;
+    root.style.transform = `translate3d(${current.x - start.x}px,${current.y - start.y}px,0)`;
+    if (current.width !== start.width) root.style.width = current.width + "px";
+    if (options.explicitHeight && current.height !== start.height)
+      root.style.height = current.height + "px";
+  };
+  const move = (e) => {
+    if (e.pointerId !== event.pointerId || done) return;
+    current = options.project(
+      e.clientX - origin.x + scroller.scrollLeft - origin.sx,
+      e.clientY - origin.y + scroller.scrollTop - origin.sy
+    );
+    if (!frame) frame = requestAnimationFrame(paint);
+  };
+  const finish = (cancel) => {
+    if (done) return;
+    done = true;
+    cancelAnimationFrame(frame);
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", cancelEvent);
+    window.removeEventListener("blur", blur);
+    const value = cancel ? start : current;
+    root.style.transform = "";
+    root.style.left = value.x + "px";
+    root.style.top = value.y + "px";
+    root.style.width = value.width + "px";
+    if (options.explicitHeight) root.style.height = value.height + "px";
+    root.classList.remove("is-transforming");
+    scroller.classList.remove("cv-has-gesture");
+    options.end?.();
+    if (!cancel && (value.x !== start.x || value.y !== start.y || value.width !== start.width || value.height !== start.height))
+      options.commit(value);
+  };
+  const up = (e) => {
+    if (e.pointerId !== event.pointerId) return;
+    move(e);
+    finish(false);
+  };
+  const cancelEvent = (e) => {
+    if (e.pointerId === event.pointerId) finish(true);
+  };
+  const blur = () => finish(true);
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", cancelEvent);
+  window.addEventListener("blur", blur);
+  return () => finish(true);
+}
+var Selection = class {
+  constructor(scroller) {
+    this.scroller = scroller;
+  }
+  current = null;
+  select(item) {
+    if (this.current !== item) {
+      this.current?.root.classList.remove("is-selected");
+      this.current = item;
+      item?.root.classList.add("is-selected");
+    }
+    this.position();
+  }
+  position() {
+    const item = this.current;
+    if (!item) return;
+    const p = item.position();
+    const outside = p.x + p.width < this.scroller.scrollLeft || p.x > this.scroller.scrollLeft + this.scroller.clientWidth || p.y + p.height < this.scroller.scrollTop || p.y > this.scroller.scrollTop + this.scroller.clientHeight;
+    item.toolbar.hidden = outside;
+    if (outside) return;
+    const width = item.toolbar.offsetWidth || 240;
+    const left = this.scroller.scrollLeft, top = this.scroller.scrollTop;
+    item.toolbar.style.left = limit(
+      0,
+      left + 8 - p.x,
+      left + this.scroller.clientWidth - width - 8 - p.x
+    ) + "px";
+    item.toolbar.style.top = Math.max(-(item.toolbar.offsetHeight || 40) - 8, top + 8 - p.y) + "px";
+  }
+  remove(item) {
+    if (this.current === item) this.select(null);
+  }
+};
+function addHandles(parent, onPointer, onKey) {
+  for (const h of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cv-resize-handle cv-handle-" + h;
+    b.setAttribute("aria-label", h === "se" ? "Resize block" : "Resize " + h);
+    b.onpointerdown = (e) => onPointer(e, h);
+    b.onkeydown = (e) => onKey(e, h);
+    parent.append(b);
+  }
+}
+
+// src/design-tools.ts
+var import_obsidian2 = require("obsidian");
+function confirmAction(app, title, message, label, confirm) {
+  class Confirm extends import_obsidian2.Modal {
+    onOpen() {
+      this.titleEl.textContent = title;
+      const p = document.createElement("p");
+      p.textContent = message;
+      this.contentEl.append(p);
+      const row = document.createElement("div");
+      row.className = "cv-confirm-actions";
+      this.contentEl.append(row);
+      const cancel = document.createElement("button");
+      cancel.textContent = "Cancel";
+      cancel.onclick = () => this.close();
+      const apply = document.createElement("button");
+      apply.className = "mod-warning";
+      apply.textContent = label;
+      apply.onclick = () => {
+        this.close();
+        confirm();
+      };
+      row.append(cancel, apply);
+      cancel.focus();
+    }
+    onClose() {
+      this.contentEl.replaceChildren();
+    }
+  }
+  new Confirm(app).open();
+}
+var NS = "http://www.w3.org/2000/svg";
+function drawingSVG(d) {
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${d.width} ${d.height}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.classList.add("cv-vector");
+  let shape;
+  if (d.kind === "rect") {
+    shape = document.createElementNS(NS, "rect");
+    shape.setAttribute("x", "1");
+    shape.setAttribute("y", "1");
+    shape.setAttribute("width", String(Math.max(1, d.width - 2)));
+    shape.setAttribute("height", String(Math.max(1, d.height - 2)));
+    shape.setAttribute("rx", "4");
+  } else if (d.kind === "ellipse") {
+    shape = document.createElementNS(NS, "ellipse");
+    shape.setAttribute("cx", String(d.width / 2));
+    shape.setAttribute("cy", String(d.height / 2));
+    shape.setAttribute("rx", String(Math.max(1, d.width / 2 - 1)));
+    shape.setAttribute("ry", String(Math.max(1, d.height / 2 - 1)));
+  } else {
+    shape = document.createElementNS(NS, "path");
+    const pts = d.points ?? [
+      [0, 0],
+      [1, 1]
+    ];
+    shape.setAttribute(
+      "d",
+      pts.map(
+        (p, i) => `${i ? "L" : "M"}${(p[0] * d.width).toFixed(2)},${(p[1] * d.height).toFixed(2)}`
+      ).join(" ")
+    );
+  }
+  shape.setAttribute("fill", "none");
+  shape.setAttribute("stroke", d.stroke);
+  shape.setAttribute("stroke-width", String(d.strokeWidth));
+  shape.setAttribute("stroke-linecap", "round");
+  shape.setAttribute("stroke-linejoin", "round");
+  shape.setAttribute("vector-effect", "non-scaling-stroke");
+  shape.setAttribute("opacity", String(d.opacity));
+  svg.append(shape);
+  return svg;
+}
+var DesignTools = class {
+  constructor(view, layer, selection, app, cb) {
+    this.view = view;
+    this.layer = layer;
+    this.selection = selection;
+    this.app = app;
+    this.cb = cb;
+    view.dom.classList.add("cv-design-editor");
+    this.dock = document.createElement("div");
+    this.dock.className = "cv-tool-dock";
+    this.dock.setAttribute("role", "toolbar");
+    this.dock.setAttribute("aria-label", "Note design tools");
+    view.dom.append(this.dock);
+    const tools = [
+      ["select", "mouse-pointer-2", "Select objects"],
+      ["pen", "pencil", "Draw with pen"],
+      ["highlighter", "highlighter", "Draw with highlighter"],
+      ["rect", "square", "Draw rectangle"],
+      ["ellipse", "circle", "Draw ellipse"],
+      ["line", "minus", "Draw line"]
+    ];
+    for (const [mode, icon, label] of tools) {
+      const b = iconButton(this.dock, icon, label, () => this.setMode(mode));
+      b.dataset.tool = mode;
+      b.setAttribute("aria-pressed", mode === "select" ? "true" : "false");
+    }
+    this.dock.append(this.divider());
+    iconButton(this.dock, "undo-2", "Undo drawing", () => this.undo());
+    iconButton(this.dock, "redo-2", "Redo drawing", () => this.redo());
+    this.dock.append(this.divider());
+    iconButton(
+      this.dock,
+      "rotate-ccw",
+      "Reset entire note layout",
+      () => confirmAction(
+        this.app,
+        "Reset this note\u2019s layout?",
+        "Return all floating blocks to normal text flow and remove all drawings in this note. Original Markdown text will not be deleted.",
+        "Reset layout",
+        () => {
+          this.setMode("select");
+          this.selection.select(null);
+          this.history.push(this.cb.read().drawings);
+          this.future = [];
+          this.cb.reset();
+        }
+      )
+    );
+    this.catcher = document.createElement("div");
+    this.catcher.className = "cv-drawing-catcher";
+    this.catcher.hidden = true;
+    this.catcher.setAttribute("aria-label", "Draw inside this note");
+    view.scrollDOM.append(this.catcher);
+    this.catcher.onpointerdown = (e) => this.beginDrawing(e);
+    const scroll = () => {
+      if (this.scrollFrame) return;
+      this.scrollFrame = requestAnimationFrame(() => {
+        this.scrollFrame = 0;
+        this.positionCatcher();
+        this.selection.position();
+      });
+    };
+    view.scrollDOM.addEventListener("scroll", scroll, { passive: true });
+    this.cleanups.push(
+      () => view.scrollDOM.removeEventListener("scroll", scroll)
+    );
+    const deselect = (e) => {
+      if (!(e.target instanceof Element)) return;
+      if (!e.target.closest(
+        ".cv-floating-block,.cv-drawing-object,.cv-tool-dock,.cv-context-toolbar"
+      ))
+        this.selection.select(null);
+    };
+    view.dom.addEventListener("pointerdown", deselect);
+    this.cleanups.push(
+      () => view.dom.removeEventListener("pointerdown", deselect)
+    );
+    const key = (e) => {
+      const target = e.target;
+      if (target.closest("textarea,input,.cm-content")) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.disposeDrawing?.();
+        this.setMode("select");
+        this.selection.select(null);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && (target.closest(".cv-tool-dock,.cv-drawing-object") || this.selection.current?.root.classList.contains("cv-drawing-object"))) {
+        e.preventDefault();
+        e.stopPropagation();
+        (e.shiftKey ? this.redo : this.undo).call(this);
+      }
+    };
+    view.dom.addEventListener("keydown", key, true);
+    this.cleanups.push(
+      () => view.dom.removeEventListener("keydown", key, true)
+    );
+  }
+  dock;
+  mode = "select";
+  catcher;
+  shapes = /* @__PURE__ */ new Map();
+  draft = null;
+  disposeDrawing = null;
+  history = [];
+  future = [];
+  path = "";
+  scrollFrame = 0;
+  cleanups = [];
+  divider() {
+    const d = document.createElement("span");
+    d.className = "cv-tool-divider";
+    d.setAttribute("aria-hidden", "true");
+    return d;
+  }
+  setMode(mode) {
+    if (mode !== this.mode) this.disposeDrawing?.();
+    this.mode = mode;
+    this.layer.classList.toggle("is-drawing-mode", mode !== "select");
+    if (mode !== "select") this.selection.select(null);
+    for (const b of Array.from(
+      this.dock.querySelectorAll("[data-tool]")
+    ))
+      b.setAttribute("aria-pressed", String(b.dataset.tool === mode));
+    this.catcher.hidden = mode === "select" || !this.cb.read().enabled || !this.cb.read().live;
+    if (!this.catcher.hidden) this.positionCatcher();
+  }
+  positionCatcher() {
+    if (this.catcher.hidden) return;
+    const s = this.view.scrollDOM;
+    Object.assign(this.catcher.style, {
+      left: s.scrollLeft + "px",
+      top: s.scrollTop + "px",
+      width: s.clientWidth + "px",
+      height: s.clientHeight + "px"
+    });
+  }
+  sync() {
+    const state = this.cb.read();
+    if (state.path !== this.path) {
+      this.path = state.path;
+      this.history = [];
+      this.future = [];
+      this.selection.select(null);
+      this.setMode("select");
+    }
+    const show = state.enabled && state.live && !!state.path;
+    this.dock.hidden = !show;
+    if (!show) this.setMode("select");
+    for (const [id, obj] of this.shapes)
+      if (!show || !state.drawings.some((d) => d.id === id)) {
+        obj.destroy();
+        this.shapes.delete(id);
+      }
+    if (show)
+      for (const d of state.drawings) {
+        let object = this.shapes.get(d.id);
+        if (!object) {
+          object = new DrawingObject(
+            d,
+            this.view,
+            this.layer,
+            this.selection,
+            (next) => this.change(next),
+            () => this.remove(d.id)
+          );
+          this.shapes.set(d.id, object);
+        }
+        if (object.value !== d) object.update(d);
+      }
+    for (const label of ["Undo drawing", "Redo drawing"]) {
+      const button = this.dock.querySelector(
+        `[aria-label="${label}"]`
+      );
+      if (button)
+        button.disabled = label === "Undo drawing" ? !this.history.length : !this.future.length;
+    }
+    this.selection.position();
+  }
+  change(value) {
+    this.commit(
+      this.cb.read().drawings.map((d) => d.id === value.id ? value : d)
+    );
+  }
+  remove(id) {
+    this.commit(this.cb.read().drawings.filter((d) => d.id !== id));
+    this.dock.querySelector("[data-tool=select]")?.focus({ preventScroll: true });
+  }
+  commit(next) {
+    this.history.push(this.cb.read().drawings);
+    if (this.history.length > 40) this.history.shift();
+    this.future = [];
+    this.cb.setDrawings(next);
+  }
+  undo() {
+    const previous = this.history.pop();
+    if (!previous) return;
+    this.future.push(this.cb.read().drawings);
+    this.cb.setDrawings(previous);
+  }
+  redo() {
+    const next = this.future.pop();
+    if (!next) return;
+    this.history.push(this.cb.read().drawings);
+    this.cb.setDrawings(next);
+  }
+  point(e) {
+    const rect = this.view.scrollDOM.getBoundingClientRect();
+    return [
+      limit(e.clientX - rect.left + this.view.scrollDOM.scrollLeft, 0, 5e4),
+      limit(e.clientY - rect.top + this.view.scrollDOM.scrollTop, 0, 5e4)
+    ];
+  }
+  beginDrawing(event) {
+    if (event.button !== 0 || this.mode === "select") return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.disposeDrawing?.();
+    const mode = this.mode;
+    const kind = mode === "highlighter" ? "pen" : mode;
+    const points = [this.point(event)];
+    let frame = 0;
+    let ended = false;
+    let value = null;
+    this.draft = document.createElement("div");
+    this.draft.className = "cv-drawing-preview";
+    this.layer.append(this.draft);
+    const paint = () => {
+      frame = 0;
+      value = drawingFromPoints(
+        kind,
+        points,
+        mode === "highlighter" ? "#EAC26B" : "currentColor",
+        mode === "highlighter" ? 16 : 2,
+        mode === "highlighter" ? 0.35 : 1
+      );
+      if (!value || !this.draft) return;
+      Object.assign(this.draft.style, {
+        left: value.x + "px",
+        top: value.y + "px",
+        width: value.width + "px",
+        height: value.height + "px"
+      });
+      this.draft.replaceChildren(drawingSVG(value));
+    };
+    const move = (e) => {
+      if (e.pointerId !== event.pointerId) return;
+      const p = this.point(e);
+      if (kind === "pen") {
+        const last = points[points.length - 1];
+        if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 1.5) return;
+        if (points.length < 5e3) points.push(p);
+        else points[points.length - 1] = p;
+      } else points[1] = p;
+      if (!frame) frame = requestAnimationFrame(paint);
+    };
+    const finish = (cancel) => {
+      if (ended) return;
+      ended = true;
+      cancelAnimationFrame(frame);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancelEvent);
+      window.removeEventListener("blur", blur);
+      if (!cancel) paint();
+      this.draft?.remove();
+      this.draft = null;
+      this.disposeDrawing = null;
+      if (!cancel && value) {
+        const id = value.id;
+        this.commit([...this.cb.read().drawings, value]);
+        this.selection.select(this.shapes.get(id) ?? null);
+      }
+    };
+    const up = (e) => {
+      if (e.pointerId === event.pointerId) {
+        move(e);
+        finish(false);
+      }
+    };
+    const cancelEvent = (e) => {
+      if (e.pointerId === event.pointerId) finish(true);
+    };
+    const blur = () => finish(true);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancelEvent);
+    window.addEventListener("blur", blur);
+    this.disposeDrawing = () => finish(true);
+  }
+  destroy() {
+    this.disposeDrawing?.();
+    cancelAnimationFrame(this.scrollFrame);
+    this.cleanups.forEach((f) => f());
+    this.shapes.forEach((o) => o.destroy());
+    this.shapes.clear();
+    this.catcher.remove();
+    this.dock.remove();
+    this.view.dom.classList.remove("cv-design-editor");
+  }
+};
+var DrawingObject = class {
+  constructor(value, view, parent, selection, change, remove) {
+    this.value = value;
+    this.view = view;
+    this.selection = selection;
+    this.change = change;
+    this.remove = remove;
+    this.id = value.id;
+    this.root = document.createElement("div");
+    this.root.className = "cv-drawing-object";
+    this.root.tabIndex = 0;
+    this.root.onfocus = () => this.selection.select(this);
+    this.root.addEventListener("focusin", () => this.selection.select(this));
+    this.root.setAttribute("aria-label", value.kind + " drawing");
+    parent.append(this.root);
+    this.toolbar = document.createElement("div");
+    this.toolbar.className = "cv-context-toolbar";
+    this.toolbar.setAttribute("role", "toolbar");
+    this.toolbar.setAttribute("aria-label", "Selected drawing tools");
+    this.root.append(this.toolbar);
+    const grip = iconButton(
+      this.toolbar,
+      "move",
+      "Move drawing",
+      () => this.select()
+    );
+    grip.onpointerdown = (e) => this.gesture(e);
+    iconButton(
+      this.toolbar,
+      "palette",
+      "Drawing color",
+      () => this.properties("color")
+    );
+    iconButton(
+      this.toolbar,
+      "sliders-horizontal",
+      "Brush thickness",
+      () => this.properties("width")
+    );
+    const del = iconButton(
+      this.toolbar,
+      "trash-2",
+      "Delete this drawing",
+      () => this.remove()
+    );
+    del.classList.add("cv-danger");
+    this.visual = document.createElement("div");
+    this.visual.className = "cv-drawing-visual";
+    this.root.append(this.visual);
+    addHandles(
+      this.root,
+      (e, h) => this.gesture(e, h),
+      (e, h) => this.key(e, h)
+    );
+    this.root.onpointerdown = (e) => {
+      if (e.target.closest("button,.cv-property-popover")) return;
+      this.gesture(e);
+    };
+    this.root.onkeydown = (e) => {
+      if (e.target instanceof HTMLButtonElement) return;
+      this.key(e);
+    };
+    this.root.addEventListener("pointerdown", (e) => e.stopPropagation());
+    this.update(value);
+  }
+  root;
+  toolbar;
+  id;
+  visual;
+  cancelGesture = null;
+  position = () => this.value;
+  select() {
+    this.selection.select(this);
+    this.root.focus({ preventScroll: true });
+  }
+  update(value) {
+    const old = this.value;
+    this.value = value;
+    Object.assign(this.root.style, {
+      left: value.x + "px",
+      top: value.y + "px",
+      width: value.width + "px",
+      height: value.height + "px"
+    });
+    if (!this.visual.firstChild || old.kind !== value.kind || old.width !== value.width || old.height !== value.height || old.points !== value.points || old.stroke !== value.stroke || old.strokeWidth !== value.strokeWidth || old.opacity !== value.opacity)
+      this.visual.replaceChildren(drawingSVG(value));
+  }
+  properties(type) {
+    this.root.querySelector(".cv-property-popover")?.remove();
+    const menu = document.createElement("div");
+    menu.className = "cv-property-popover";
+    menu.setAttribute("role", "group");
+    menu.setAttribute(
+      "aria-label",
+      type === "color" ? "Stroke colors" : "Brush weights"
+    );
+    this.toolbar.append(menu);
+    if (type === "color") {
+      for (const color of [
+        "currentColor",
+        "#2783DE",
+        "#46A171",
+        "#D5803B",
+        "#E56458"
+      ]) {
+        const b = document.createElement("button");
+        b.className = "cv-color-swatch";
+        b.style.setProperty(
+          "--swatch",
+          color === "currentColor" ? "var(--text-normal)" : color
+        );
+        b.setAttribute("aria-label", "Stroke " + color);
+        b.setAttribute("aria-pressed", String(this.value.stroke === color));
+        b.onclick = () => {
+          this.change({ ...this.value, stroke: color });
+          menu.remove();
+        };
+        menu.append(b);
+      }
+    } else
+      for (const width of [2, 4, 8, 16]) {
+        const b = document.createElement("button");
+        b.textContent = String(width);
+        b.setAttribute("aria-label", "Stroke width " + width);
+        b.setAttribute(
+          "aria-pressed",
+          String(this.value.strokeWidth === width)
+        );
+        b.onclick = () => {
+          this.change({ ...this.value, strokeWidth: width });
+          menu.remove();
+        };
+        menu.append(b);
+      }
+    this.selection.position();
+    const rect = this.view.scrollDOM.getBoundingClientRect();
+    const bar = this.toolbar.getBoundingClientRect();
+    menu.style.left = Math.min(0, rect.right - 8 - bar.left - menu.offsetWidth) + "px";
+  }
+  gesture(e, h) {
+    if (e.button !== 0) return;
+    this.select();
+    this.cancelGesture?.();
+    const start = { ...this.value };
+    this.cancelGesture = previewGesture(e, {
+      scroller: this.view.scrollDOM,
+      root: this.root,
+      start,
+      explicitHeight: true,
+      project: (dx, dy) => h ? resized(start, dx, dy, h) : {
+        ...start,
+        x: limit(start.x + dx, 0, 5e4),
+        y: limit(start.y + dy, 0, 5e4)
+      },
+      commit: (p) => {
+        this.change({ ...this.value, ...p });
+        this.selection.position();
+      },
+      end: () => this.cancelGesture = null
+    });
+  }
+  key(e, h) {
+    if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      e.stopPropagation();
+      this.remove();
+      return;
+    }
+    if (e.key === "Escape") {
+      this.selection.select(null);
+      return;
+    }
+    const d = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1]
+    };
+    if (!d[e.key]) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.select();
+    const [dx, dy] = d[e.key].map((n) => n * (e.shiftKey ? 10 : 1));
+    this.change({
+      ...this.value,
+      ...h ? resized(this.value, dx, dy, h) : {
+        x: limit(this.value.x + dx, 0, 5e4),
+        y: limit(this.value.y + dy, 0, 5e4)
+      }
+    });
+    this.selection.position();
+  }
+  destroy() {
+    this.cancelGesture?.();
+    this.selection.remove(this);
+    this.root.remove();
+  }
+};
+
+// src/spatial.ts
 var action = import_state.StateEffect.define();
 var fields = /* @__PURE__ */ new WeakMap();
-var live = (state) => state.field(import_obsidian.editorLivePreviewField, false) === true;
-var pathOf = (state) => state.field(import_obsidian.editorInfoField, false)?.file?.path ?? "";
+var live = (state) => state.field(import_obsidian3.editorLivePreviewField, false) === true;
+var pathOf = (state) => state.field(import_obsidian3.editorInfoField, false)?.file?.path ?? "";
 var Hidden = class extends import_view.WidgetType {
   toDOM() {
     const el = document.createElement("span");
@@ -4372,8 +5123,17 @@ var Space = class extends import_view.WidgetType {
     return true;
   }
 };
+function reserve(value) {
+  return Math.ceil(
+    Math.max(
+      800,
+      ...value.pins.map((p) => p.y + p.height + 120),
+      ...value.drawings.map((d) => d.y + d.height + 120)
+    ) / 512
+  ) * 512;
+}
 function decorate(value, length) {
-  if (!value.enabled || !value.live || !value.pins.length)
+  if (!value.enabled || !value.live || !value.pins.length && !value.drawings.length)
     return import_view.Decoration.none;
   const ranges = value.pins.map(
     (p) => import_view.Decoration.replace({ block: true, widget: new Hidden() }).range(
@@ -4381,12 +5141,12 @@ function decorate(value, length) {
       p.to
     )
   );
-  const reserve = Math.max(800, ...value.pins.map((p) => p.y + p.height + 120));
+  const height = reserve(value);
   ranges.push(
     import_view.Decoration.widget({
       block: true,
       side: 1,
-      widget: new Space(reserve)
+      widget: new Space(height)
     }).range(length)
   );
   return import_view.Decoration.set(ranges, true);
@@ -4401,6 +5161,7 @@ function createSpatialExtension(host) {
         path,
         enabled: saved?.enabled ?? true,
         live: live(state),
+        drawings: saved?.drawings ?? [],
         ...restored,
         decorations: import_view.Decoration.none
       };
@@ -4408,18 +5169,23 @@ function createSpatialExtension(host) {
       return value;
     },
     update(old, tr) {
+      const path = pathOf(tr.state);
+      const isLive = live(tr.state);
+      const effects = tr.effects.filter((e) => e.is(action));
+      if (!tr.docChanged && !effects.length && path === old.path && isLive === old.live)
+        return old;
       let value = {
         ...old,
         pins: old.pins,
         live: live(tr.state)
       };
-      const path = pathOf(tr.state);
       if (path !== old.path) {
         const saved = host.store.notes[path];
         value = {
           ...value,
           path,
           enabled: saved?.enabled ?? true,
+          drawings: saved?.drawings ?? [],
           ...restore(saved?.pins ?? [], tr.state.doc.toString())
         };
       } else if (tr.docChanged) {
@@ -4468,8 +5234,21 @@ function createSpatialExtension(host) {
             )
           };
         if (a.type === "toggle") value = { ...value, enabled: !value.enabled };
+        if (a.type === "drawings")
+          value = { ...value, drawings: a.drawings, enabled: true };
+        if (a.type === "reset")
+          value = {
+            ...value,
+            pins: [],
+            detached: [],
+            drawings: [],
+            enabled: true
+          };
       }
-      if (tr.docChanged || tr.effects.some((e) => e.is(action)) || path !== old.path || value.live !== old.live)
+      const sourceRangesChanged = tr.docChanged || path !== old.path || effects.some(
+        (e) => e.is(action) && ["add", "remove", "reset", "toggle"].includes(e.value.type)
+      );
+      if (sourceRangesChanged || value.live !== old.live || reserve(value) !== reserve(old) || !old.drawings.length !== !value.drawings.length)
         value.decorations = decorate(value, tr.state.doc.length);
       return value;
     },
@@ -4496,9 +5275,23 @@ function createSpatialExtension(host) {
         this.layer.className = "cv-spatial-layer";
         this.layer.contentEditable = "false";
         view.scrollDOM.append(this.layer);
+        this.selection = new Selection(view.scrollDOM);
+        this.tools = new DesignTools(
+          view,
+          this.layer,
+          this.selection,
+          host.app,
+          {
+            read: () => view.state.field(field),
+            setDrawings: (drawings) => view.dispatch({
+              effects: action.of({ type: "drawings", drawings })
+            }),
+            reset: () => view.dispatch({ effects: action.of({ type: "reset" }) })
+          }
+        );
         this.handle = document.createElement("button");
         this.handle.className = "cv-float-handle";
-        this.handle.textContent = "::";
+        (0, import_obsidian3.setIcon)(this.handle, "grip-vertical");
         this.handle.title = "Drag this block out of the text flow";
         this.handle.setAttribute("aria-label", "Float block under pointer");
         this.layer.append(this.handle);
@@ -4521,8 +5314,15 @@ function createSpatialExtension(host) {
       layer;
       handle;
       cards = /* @__PURE__ */ new Map();
+      selection;
+      tools;
+      cachedDoc = null;
+      cachedSource = "";
+      savedPins = /* @__PURE__ */ new Map();
       hoverPos = null;
       destroyed = false;
+      hoverFrame = 0;
+      hoverEvent = null;
       parsedDoc = null;
       parsedBlocks = [];
       update(update) {
@@ -4530,7 +5330,7 @@ function createSpatialExtension(host) {
         const next = update.state.field(field);
         if (before !== next) {
           this.sync(false);
-          if (update.docChanged || before.pins !== next.pins || before.enabled !== next.enabled || before.path !== next.path)
+          if (update.docChanged || before.pins !== next.pins || before.drawings !== next.drawings || before.enabled !== next.enabled || before.path !== next.path)
             this.persist();
         }
         if (update.docChanged || update.viewportChanged)
@@ -4554,12 +5354,16 @@ function createSpatialExtension(host) {
                 host,
                 pin,
                 this.layer,
-                () => this.persist()
+                () => this.persist(),
+                this.selection
               );
               this.cards.set(pin.id, card);
+              this.selection.select(card);
             }
-            card.update(pin);
+            if (card.pin !== pin || !card.root.style.width) card.update(pin);
           }
+        this.tools.sync();
+        this.selection.position();
         if (initial && state.detached.length)
           host.notify(
             `${state.detached.length} Canvesidian placement(s) could not be matched safely. Their text remains visible; saved placement has been retained.`
@@ -4568,19 +5372,32 @@ function createSpatialExtension(host) {
       persist() {
         const state = this.view.state.field(field);
         if (!state.path) return;
-        const source = this.view.state.doc.toString();
+        const changed = this.cachedDoc !== this.view.state.doc;
+        if (changed) {
+          this.cachedDoc = this.view.state.doc;
+          this.cachedSource = this.view.state.doc.toString();
+          this.savedPins.clear();
+        }
+        const currentIds = new Set(state.pins.map((p) => p.id));
+        for (const id of this.savedPins.keys())
+          if (!currentIds.has(id)) this.savedPins.delete(id);
+        const saved = state.pins.map((p) => {
+          const previous = this.savedPins.get(p.id);
+          const value = previous ? { ...previous, ...p } : capture(p, this.cachedSource);
+          this.savedPins.set(p.id, value);
+          return value;
+        });
         host.store.notes[state.path] = {
           enabled: state.enabled,
-          pins: [
-            ...state.pins.map((p) => capture(p, source)),
-            ...state.detached
-          ]
+          pins: [...saved, ...state.detached],
+          drawings: state.drawings
         };
         host.scheduleSave();
       }
       hover(event) {
         const state = this.view.state.field(field);
-        if (!state.enabled || !state.live) return;
+        if (!state.enabled || !state.live || this.view.scrollDOM.classList.contains("cv-has-gesture"))
+          return;
         if (!(event.target instanceof HTMLElement) || !event.target.closest(".cm-content") || event.target.closest(".cv-spatial-layer"))
           return;
         const pos = this.view.posAtCoords({
@@ -4610,11 +5427,21 @@ function createSpatialExtension(host) {
         this.handle.style.top = coords.top - rect.top + this.view.scrollDOM.scrollTop + "px";
         this.handle.hidden = false;
       }
+      queueHover(event) {
+        this.hoverEvent = event;
+        if (!this.hoverFrame)
+          this.hoverFrame = requestAnimationFrame(() => {
+            this.hoverFrame = 0;
+            if (this.hoverEvent && !this.destroyed) this.hover(this.hoverEvent);
+          });
+      }
       destroy() {
+        cancelAnimationFrame(this.hoverFrame);
         this.destroyed = true;
         this.persist();
         this.cards.forEach((c) => c.destroy());
         this.cards.clear();
+        this.tools.destroy();
         this.layer.remove();
         this.view.scrollDOM.classList.remove("cv-spatial-scroller");
         host.views.delete(this.view);
@@ -4624,12 +5451,16 @@ function createSpatialExtension(host) {
     {
       eventHandlers: {
         mousemove(event) {
-          this.hover(event);
+          this.queueHover(event);
         }
       }
     }
   );
-  return [import_state.Prec.high(field), plugin];
+  return [
+    import_view.EditorView.editorAttributes.of({ class: "cv-design-editor" }),
+    import_state.Prec.high(field),
+    plugin
+  ];
 }
 function toggleSpatial(view) {
   if (fields.has(view))
@@ -4683,60 +5514,110 @@ function floatAt(view, host, pos) {
   };
   for (let pass = 0; pass < state.pins.length + 1; pass++) {
     const overlap = state.pins.find(
-      (p) => pin.x < p.x + p.width + 16 && pin.x + pin.width + 16 > p.x && pin.y < p.y + p.height + 24 && pin.y + pin.height + 24 > p.y
+      (p) => pin.x < p.x + p.width + 16 && pin.x + pin.width + 16 > p.x && pin.y < p.y + p.height + 72 && pin.y + pin.height + 72 > p.y
     );
     if (!overlap) break;
-    pin.y = limit(overlap.y + overlap.height + 24, 8, 5e4);
+    pin.y = limit(overlap.y + overlap.height + 72, 8, 5e4);
   }
   view.dispatch({ effects: action.of({ type: "add", pin }) });
   return pin;
 }
 var FloatingBlock = class {
-  constructor(view, host, pin, parent, persist) {
+  constructor(view, host, pin, parent, persist, selection) {
     this.view = view;
     this.host = host;
     this.persist = persist;
+    this.selection = selection;
     this.pin = pin;
+    this.id = pin.id;
     this.path = this.view.state.field(fields.get(this.view)).path;
     this.root = document.createElement("article");
     this.root.className = "cv-floating-block";
     this.root.setAttribute("aria-label", "Floating block in this note");
     this.root.contentEditable = "false";
+    this.root.tabIndex = 0;
+    this.root.onfocus = () => this.selection.select(this);
+    this.root.addEventListener("focusin", () => this.selection.select(this));
     parent.append(this.root);
     const toolbar = document.createElement("div");
-    toolbar.className = "cv-floating-toolbar";
+    this.toolbar = toolbar;
+    toolbar.className = "cv-context-toolbar";
+    toolbar.setAttribute("role", "toolbar");
+    toolbar.setAttribute("aria-label", "Selected text tools");
     this.root.append(toolbar);
-    this.grip = this.button(toolbar, "::", "Move this block", () => {
-    });
-    this.grip.className = "cv-block-grip";
+    this.grip = iconButton(
+      toolbar,
+      "move",
+      "Move this block",
+      () => this.select()
+    );
+    this.grip.classList.add("cv-block-grip");
     this.grip.onpointerdown = (e) => this.beginDrag(e);
     this.grip.onkeydown = (e) => this.nudge(e, false);
-    this.button(toolbar, "Edit", "Edit text in place", () => this.edit());
-    this.button(toolbar, "Return", "Return block to normal text flow", () => {
-      const from = this.pin.from;
-      this.dispatch({ type: "remove", id: this.pin.id });
-      this.view.dispatch({
-        selection: { anchor: Math.min(from, this.view.state.doc.length) },
-        scrollIntoView: true
-      });
-      this.view.focus();
-    });
+    this.editButton = iconButton(
+      toolbar,
+      "pencil",
+      "Edit text in place",
+      () => {
+        this.select();
+        if (this.textarea) {
+          if (this.commitDraft?.()) this.finishEdit();
+        } else this.edit();
+      }
+    );
+    iconButton(
+      toolbar,
+      "corner-up-left",
+      "Return block to normal text flow",
+      () => {
+        const from = this.pin.from;
+        this.dispatch({ type: "remove", id: this.pin.id });
+        this.view.dispatch({
+          selection: { anchor: Math.min(from, this.view.state.doc.length) },
+          scrollIntoView: true
+        });
+        this.view.focus();
+      }
+    );
+    const del = iconButton(
+      toolbar,
+      "trash-2",
+      "Delete this block from note",
+      () => this.remove()
+    );
+    del.classList.add("cv-danger");
     this.body = document.createElement("div");
     this.body.className = "cv-floating-body markdown-rendered";
     this.body.dir = "auto";
     this.body.ondblclick = () => this.edit();
     this.root.append(this.body);
-    this.resize = this.button(this.root, "\u2194", "Resize block", () => {
-    });
-    this.resize.className = "cv-block-resize";
-    this.resize.onpointerdown = (e) => this.drag(e, true);
-    this.resize.onkeydown = (e) => this.nudge(e, true);
+    addHandles(
+      this.root,
+      (e, h) => this.drag(e, h),
+      (e) => this.nudge(e, true)
+    );
+    this.resize = this.root.querySelector(".cv-handle-se");
+    this.root.onpointerdown = (e) => {
+      if (e.target.closest("button,textarea,input,a")) return;
+      this.beginDrag(e);
+    };
+    this.root.onkeydown = (e) => {
+      if (e.target.closest("textarea,input,button")) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        this.remove();
+      } else if (e.key === "Escape") this.selection.select(null);
+      else this.nudge(e, false);
+    };
     this.root.addEventListener("keydown", (e) => e.stopPropagation());
     this.root.addEventListener("pointerdown", (e) => e.stopPropagation());
     this.root.addEventListener("mousedown", (e) => e.stopPropagation());
     this.root.addEventListener("input", (e) => e.stopPropagation());
-    this.observer = new ResizeObserver(() => {
-      const height = Math.ceil(this.root.getBoundingClientRect().height);
+    this.observer = new ResizeObserver((entries) => {
+      if (this.dragging) return;
+      const height = Math.ceil(
+        entries[0].borderBoxSize?.[0]?.blockSize ?? entries[0].contentRect.height
+      );
       if (Math.abs(height - this.pin.height) > 2 && height > 0) {
         cancelAnimationFrame(this.sizeFrame);
         this.sizeFrame = requestAnimationFrame(() => {
@@ -4751,6 +5632,11 @@ var FloatingBlock = class {
     });
     this.observer.observe(this.root);
   }
+  id;
+  toolbar;
+  editButton;
+  commitDraft = null;
+  dragging = false;
   root;
   body;
   grip;
@@ -4767,16 +5653,6 @@ var FloatingBlock = class {
   cleanupDrag = null;
   observer;
   sizeFrame = 0;
-  button(parent, text, label, fn) {
-    const button = document.createElement("button");
-    button.textContent = text;
-    button.type = "button";
-    button.title = label;
-    button.setAttribute("aria-label", label);
-    button.onclick = fn;
-    parent.append(button);
-    return button;
-  }
   dispatch(a) {
     this.view.dispatch({ effects: action.of(a) });
   }
@@ -4785,7 +5661,7 @@ var FloatingBlock = class {
     this.root.style.left = pin.x + "px";
     this.root.style.top = pin.y + "px";
     this.root.style.width = pin.width + "px";
-    const source = this.view.state.doc.sliceString(pin.from, pin.to);
+    const source = pin.text;
     if (this.textarea) {
       if (source !== this.draftBase) {
         if (this.textarea.value === this.draftBase || this.textarea.value === source) {
@@ -4804,7 +5680,7 @@ var FloatingBlock = class {
           );
         }
       }
-      this.sizeInput();
+      if (source !== this.draftBase) this.sizeInput();
       return;
     }
     if (this.lastText !== source) {
@@ -4815,12 +5691,12 @@ var FloatingBlock = class {
   async render(text) {
     const generation = ++this.generation;
     this.life?.unload();
-    this.life = new import_obsidian.Component();
+    this.life = new import_obsidian3.Component();
     this.life.load();
     const staging = document.createElement("div");
     this.body.replaceChildren(staging);
     try {
-      await import_obsidian.MarkdownRenderer.render(
+      await import_obsidian3.MarkdownRenderer.render(
         this.host.app,
         text,
         staging,
@@ -4833,7 +5709,30 @@ var FloatingBlock = class {
       console.error("Canvesidian block renderer", e);
     }
   }
+  position = () => this.pin;
+  select() {
+    this.selection.select(this);
+    this.root.focus({ preventScroll: true });
+  }
+  remove = () => {
+    confirmAction(
+      this.host.app,
+      "Delete this block?",
+      "This removes the block\u2019s Markdown from this note. Text undo can restore it. Returning a block to normal flow is a separate action.",
+      "Delete block",
+      () => {
+        if (!this.root.isConnected) return;
+        this.view.dispatch({
+          changes: { from: this.pin.from, to: this.pin.to, insert: "" },
+          effects: action.of({ type: "remove", id: this.pin.id }),
+          annotations: import_state.Transaction.userEvent.of("delete.selection")
+        });
+        this.view.focus();
+      }
+    );
+  };
   edit() {
+    this.selection.select(this);
     if (this.textarea) {
       this.textarea.focus();
       return;
@@ -4899,15 +5798,10 @@ var FloatingBlock = class {
         if (commit()) this.finishEdit();
       }
     };
-    const done = this.button(
-      this.body,
-      "Done",
-      "Finish editing this block",
-      () => {
-        if (commit()) this.finishEdit();
-      }
-    );
-    done.className = "cv-done";
+    this.commitDraft = commit;
+    (0, import_obsidian3.setIcon)(this.editButton, "check");
+    this.editButton.setAttribute("aria-label", "Finish editing this block");
+    this.editButton.title = "Finish editing this block";
     this.sizeInput();
     input.focus();
   }
@@ -4928,6 +5822,10 @@ var FloatingBlock = class {
   }
   finishEdit() {
     this.composing = false;
+    this.commitDraft = null;
+    (0, import_obsidian3.setIcon)(this.editButton, "pencil");
+    this.editButton.setAttribute("aria-label", "Edit text in place");
+    this.editButton.title = "Edit text in place";
     this.textarea = null;
     this.body.replaceChildren();
     this.lastText = null;
@@ -4935,6 +5833,7 @@ var FloatingBlock = class {
     this.grip.focus({ preventScroll: true });
   }
   beginDrag(event, alignToPointer = false) {
+    this.select();
     if (alignToPointer) {
       const rect = this.view.scrollDOM.getBoundingClientRect();
       this.dispatch({
@@ -4954,7 +5853,7 @@ var FloatingBlock = class {
         }
       });
     }
-    this.drag(event, false);
+    this.drag(event);
   }
   nudge(e, resize) {
     const d = {
@@ -4975,52 +5874,45 @@ var FloatingBlock = class {
       }
     });
   }
-  drag(e, resize) {
+  drag(e, handle) {
     if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
+    this.select();
     this.cleanupDrag?.();
-    const start = {
-      x: e.clientX,
-      y: e.clientY,
-      left: this.pin.x,
-      top: this.pin.y,
-      width: this.pin.width,
-      sx: this.view.scrollDOM.scrollLeft,
-      sy: this.view.scrollDOM.scrollTop
-    };
-    const move = (event) => {
-      if (event.pointerId !== e.pointerId) return;
-      const dx = event.clientX - start.x + this.view.scrollDOM.scrollLeft - start.sx;
-      const dy = event.clientY - start.y + this.view.scrollDOM.scrollTop - start.sy;
-      this.dispatch({
-        type: "place",
-        id: this.pin.id,
-        placement: resize ? { width: limit(start.width + dx, 200, 1200) } : {
-          x: limit(start.left + dx, 0, 5e4),
-          y: limit(start.top + dy, 0, 5e4)
-        }
-      });
-    };
-    const end = (event) => {
-      if (event && event.pointerId !== e.pointerId) return;
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-      window.removeEventListener("blur", blur);
-      this.cleanupDrag = null;
-      this.persist();
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
-    const blur = () => end();
-    window.addEventListener("blur", blur, { once: true });
-    this.cleanupDrag = () => {
-      window.removeEventListener("blur", blur);
-      end();
-    };
-    this.grip.focus({ preventScroll: true });
+    this.dragging = true;
+    const start = { ...this.pin };
+    this.cleanupDrag = previewGesture(e, {
+      scroller: this.view.scrollDOM,
+      root: this.root,
+      start,
+      project: (dx, dy) => {
+        if (!handle)
+          return {
+            ...start,
+            x: limit(start.x + dx, 0, 5e4),
+            y: limit(start.y + dy, 0, 5e4)
+          };
+        const horizontal = handle.includes("w") ? "w" : "e";
+        const next = resized(start, dx, 0, horizontal, 200, 24);
+        return { ...next, y: start.y, height: start.height };
+      },
+      commit: (p) => {
+        this.dispatch({
+          type: "place",
+          id: this.pin.id,
+          placement: {
+            x: p.x,
+            y: p.y,
+            width: p.width,
+            height: Math.ceil(this.root.offsetHeight)
+          }
+        });
+        this.selection.position();
+      },
+      end: () => {
+        this.dragging = false;
+        this.cleanupDrag = null;
+      }
+    });
   }
   destroy() {
     if (this.textarea && this.textarea.value !== this.draftBase) {
@@ -5045,13 +5937,14 @@ var FloatingBlock = class {
     this.cleanupDrag?.();
     this.observer.disconnect();
     this.life?.unload();
+    this.selection.remove(this);
     this.root.remove();
   }
 };
 
 // src/main.ts
-var Canvesidian = class extends import_obsidian2.Plugin {
-  store = { version: 2, notes: {} };
+var Canvesidian = class extends import_obsidian4.Plugin {
+  store = { version: 3, notes: {} };
   views = /* @__PURE__ */ new Set();
   dataReady = false;
   timer;
@@ -5060,7 +5953,7 @@ var Canvesidian = class extends import_obsidian2.Plugin {
     try {
       this.store = normalize(await this.loadData());
     } catch (e) {
-      new import_obsidian2.Notice(String(e));
+      new import_obsidian4.Notice(String(e));
       return;
     }
     this.dataReady = true;
@@ -5069,7 +5962,7 @@ var Canvesidian = class extends import_obsidian2.Plugin {
       id: "recover-interrupted-drafts",
       name: "Recover interrupted block drafts",
       callback: () => {
-        const modal = new import_obsidian2.Modal(this.app);
+        const modal = new import_obsidian4.Modal(this.app);
         modal.titleEl.setText("Interrupted block drafts");
         const drafts = this.store.recoveryDrafts ?? [];
         if (!drafts.length)
@@ -5132,7 +6025,7 @@ var Canvesidian = class extends import_obsidian2.Plugin {
   }
   findView(editor, _info) {
     return [...this.views].find(
-      (v) => v.state.field(import_obsidian2.editorInfoField, false)?.editor === editor
+      (v) => v.state.field(import_obsidian4.editorInfoField, false)?.editor === editor
     );
   }
   scheduleSave() {
@@ -5152,7 +6045,7 @@ var Canvesidian = class extends import_obsidian2.Plugin {
       await this.writes;
     } catch (e) {
       console.error(e);
-      new import_obsidian2.Notice("Canvesidian could not save placement. Check vault storage.");
+      new import_obsidian4.Notice("Canvesidian could not save placement. Check vault storage.");
     }
   }
   onunload() {
@@ -5160,6 +6053,6 @@ var Canvesidian = class extends import_obsidian2.Plugin {
     void this.flush();
   }
   notify(message) {
-    new import_obsidian2.Notice(message);
+    new import_obsidian4.Notice(message);
   }
 };
