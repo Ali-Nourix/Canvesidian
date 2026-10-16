@@ -13,10 +13,14 @@ import {
   floatAtCursor,
   toggleSpatial,
   SpatialHost,
+  refreshSpatial,
 } from "./spatial";
 
+import { CanvesidianSettings, openPreferences } from "./plugin-settings";
+import { importRaster, imageURL } from "./assets";
+
 export default class Canvesidian extends Plugin implements SpatialHost {
-  store: InlineStore = { version: 2, notes: {} };
+  store: InlineStore = { version: 5, notes: {} };
   views = new Set<EditorView>();
   private dataReady = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -29,6 +33,7 @@ export default class Canvesidian extends Plugin implements SpatialHost {
       return;
     }
     this.dataReady = true;
+    this.addSettingTab(new CanvesidianSettings(this.app, this, this));
     this.registerEditorExtension(createSpatialExtension(this));
     this.addCommand({
       id: "recover-interrupted-drafts",
@@ -97,6 +102,18 @@ export default class Canvesidian extends Plugin implements SpatialHost {
         }
       }),
     );
+  }
+  refreshDesign() {
+    for (const view of this.views) refreshSpatial(view);
+  }
+  openPreferences() {
+    openPreferences(this.app, this);
+  }
+  importImage(file: File, path: string) {
+    return importRaster(this.app, file, path);
+  }
+  imageURL(path: string) {
+    return imageURL(this.app, path);
   }
   private findView(editor: Editor, _info: MarkdownFileInfo) {
     return [...this.views].find(

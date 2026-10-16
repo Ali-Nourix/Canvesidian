@@ -24,7 +24,7 @@ __export(main_exports, {
   default: () => Canvesidian
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian2 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // node_modules/@lezer/common/dist/index.js
 var DefaultBufferLength = 1024;
@@ -3355,7 +3355,7 @@ var Buffer2 = class {
     });
   }
 };
-var Element = class {
+var Element2 = class {
   /**
   @internal
   */
@@ -3403,7 +3403,7 @@ var TreeElement = class {
   }
 };
 function elt(type, from, to, children) {
-  return new Element(type, from, to, children);
+  return new Element2(type, from, to, children);
 }
 var EmphasisUnderscore = { resolve: "Emphasis", mark: "EmphasisMark" };
 var EmphasisAsterisk = { resolve: "Emphasis", mark: "EmphasisMark" };
@@ -3750,7 +3750,7 @@ var InlineContext = class {
       if (open.type.mark)
         content2.push(this.elt(open.type.mark, start, open.to));
       for (let k = j + 1; k < i; k++) {
-        if (this.parts[k] instanceof Element)
+        if (this.parts[k] instanceof Element2)
           content2.push(this.parts[k]);
         this.parts[k] = null;
       }
@@ -3767,7 +3767,7 @@ var InlineContext = class {
     let result = [];
     for (let i = from; i < this.parts.length; i++) {
       let part = this.parts[i];
-      if (part instanceof Element)
+      if (part instanceof Element2)
         result.push(part);
     }
     return result;
@@ -3836,8 +3836,8 @@ function injectMarks(elements, marks) {
       eI++;
     if (eI < elts.length && elts[eI].from < mark.from) {
       let e = elts[eI];
-      if (e instanceof Element)
-        elts[eI] = new Element(e.type, e.from, e.to, injectMarks(e.children, [mark]));
+      if (e instanceof Element2)
+        elts[eI] = new Element2(e.type, e.from, e.to, injectMarks(e.children, [mark]));
     } else {
       elts.splice(eI++, 0, mark);
     }
@@ -4289,18 +4289,53 @@ function restore(saved, source) {
   return { pins, detached };
 }
 function normalize(raw) {
-  const result = { version: 2, notes: {} };
+  const result = { version: 5, notes: {} };
   if (!raw || typeof raw !== "object") return result;
   const object = raw;
   if (object.version === 1) {
     result.legacyBoards = object.boards;
     return result;
   }
-  if (object.version !== 2)
+  if (object.version !== 2 && object.version !== 3 && object.version !== 4 && object.version !== 5)
     throw new Error(
       "Unsupported Canvesidian data version. Existing layout data was not overwritten."
     );
+  result.settings = normalizePreferences(object.settings);
   if (object.legacyBoards) result.legacyBoards = object.legacyBoards;
+  result.toolDefaults = {};
+  for (const [mode, v] of Object.entries(object.toolDefaults ?? {})) {
+    if (![
+      "pen",
+      "highlighter",
+      "rect",
+      "ellipse",
+      "line",
+      "diamond",
+      "arrow",
+      "sticky",
+      "label",
+      "sticker",
+      "tape",
+      "icon",
+      "text",
+      "section",
+      "triangle",
+      "table",
+      "code"
+    ].includes(mode) || !v)
+      continue;
+    if (!validStroke(v.stroke) || ![v.strokeWidth, v.opacity, v.fontSize].every(Number.isFinite))
+      continue;
+    result.toolDefaults[mode] = {
+      iconId: typeof v.iconId === "string" && /^[a-z0-9-]{1,100}$/.test(v.iconId) ? v.iconId : "star",
+      stroke: v.stroke,
+      strokeWidth: limit(v.strokeWidth, 1, 32),
+      opacity: limit(v.opacity, 0.1, 1),
+      fontSize: limit(v.fontSize, 12, 72),
+      fill: v.fill === "none" || validStroke(v.fill) ? v.fill : "none",
+      sticker: STICKERS.some((s) => s.id === v.sticker) ? v.sticker : "star"
+    };
+  }
   if (Array.isArray(object.recoveryDrafts))
     result.recoveryDrafts = object.recoveryDrafts.filter(
       (d) => d && ["id", "path", "text", "savedAt"].every(
@@ -4311,12 +4346,14 @@ function normalize(raw) {
     if (!Array.isArray(note?.pins)) continue;
     result.notes[path] = {
       enabled: note.enabled !== false,
+      drawings: normalizeDrawings(note.drawings),
       pins: note.pins.filter(
         (p) => p && typeof p.id === "string" && typeof p.text === "string" && typeof p.before === "string" && typeof p.after === "string" && [p.from, p.to, p.x, p.y, p.width, p.height].every(
           Number.isFinite
         ) && p.from >= 0 && p.to >= p.from
       ).map((p) => ({
         ...p,
+        rotation: normalizeAngle(p.rotation),
         x: limit(p.x, 0, 5e4),
         y: limit(p.y, 0, 5e4),
         width: limit(p.width, 200, 1200),
@@ -4326,16 +4363,1781 @@ function normalize(raw) {
   }
   return result;
 }
+var validStroke = (s) => s === "currentColor" || typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s);
+function normalizeDrawings(raw) {
+  if (!Array.isArray(raw)) return [];
+  const ids = /* @__PURE__ */ new Set();
+  return raw.filter(
+    (d) => d && typeof d.id === "string" && !ids.has(d.id) && (ids.add(d.id), true) && [
+      "pen",
+      "rect",
+      "ellipse",
+      "line",
+      "diamond",
+      "arrow",
+      "sticky",
+      "label",
+      "sticker",
+      "tape",
+      "image",
+      "icon",
+      "triangle",
+      "text",
+      "section",
+      "table",
+      "code"
+    ].includes(d.kind) && [d.x, d.y, d.width, d.height, d.strokeWidth, d.opacity].every(
+      Number.isFinite
+    ) && validStroke(d.stroke) && (d.kind !== "pen" || Array.isArray(d.points))
+  ).map((d) => ({
+    ...d,
+    rotation: normalizeAngle(d.rotation),
+    parentId: d.kind === "tape" && typeof d.parentId === "string" ? d.parentId : void 0,
+    rotationOffset: normalizeAngle(d.rotationOffset),
+    assetPath: safeAssetPath(d.assetPath) ? d.assetPath : void 0,
+    iconId: typeof d.iconId === "string" && /^[a-z0-9-]{1,100}$/.test(d.iconId) ? d.iconId : "star",
+    text: typeof d.text === "string" ? d.text.slice(0, 1e4) : "",
+    fontSize: Number.isFinite(d.fontSize) ? limit(d.fontSize, 12, 72) : 18,
+    fill: d.fill === "none" || validStroke(d.fill) ? d.fill : "none",
+    sticker: STICKERS.some((s) => s.id === d.sticker) ? d.sticker : "star",
+    x: limit(d.x, 0, 5e4),
+    y: limit(d.y, 0, 5e4),
+    width: limit(d.width, 2, 1e4),
+    height: limit(d.height, 2, 1e4),
+    strokeWidth: limit(d.strokeWidth, 1, 32),
+    opacity: limit(d.opacity, 0.1, 1),
+    points: (Array.isArray(d.points) ? d.points : void 0)?.filter(
+      (p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)
+    ).slice(0, 5e3).map((p) => [limit(p[0], 0, 1), limit(p[1], 0, 1)])
+  }));
+}
+function drawingFromPoints(kind, world, stroke = "currentColor", strokeWidth = 2, opacity = 1) {
+  if (world.length < 2) return null;
+  let points = world.filter(
+    (p, i) => i === 0 || i === world.length - 1 || Math.hypot(p[0] - world[i - 1][0], p[1] - world[i - 1][1]) >= 1.5
+  ).slice(0, 5e3);
+  if (points.length < 2) points = [world[0], world[world.length - 1]];
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const x = Math.min(...xs), y = Math.min(...ys), width = Math.max(2, Math.max(...xs) - x), height = Math.max(2, Math.max(...ys) - y);
+  if (width < 3 && height < 3) return null;
+  return {
+    id: crypto.randomUUID(),
+    kind,
+    x,
+    y,
+    width,
+    height,
+    stroke,
+    strokeWidth,
+    opacity,
+    points: points.map((p) => [(p[0] - x) / width, (p[1] - y) / height])
+  };
+}
+function resized(start, dx, dy, handle, minWidth = 24, minHeight = 24) {
+  let left = start.x, top = start.y, right = left + start.width, bottom = top + start.height;
+  if (handle.includes("w")) left = limit(left + dx, 0, right - minWidth);
+  if (handle.includes("e")) right = limit(right + dx, left + minWidth, 51200);
+  if (handle.includes("n")) top = limit(top + dy, 0, bottom - minHeight);
+  if (handle.includes("s")) bottom = limit(bottom + dy, top + minHeight, 6e4);
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+var STICKERS = [
+  { id: "star", icon: "star", label: "Star", color: "#D5803B" },
+  { id: "heart", icon: "heart", label: "Heart", color: "#E56458" },
+  { id: "thumbs-up", icon: "thumbs-up", label: "Thumbs up", color: "#46A171" },
+  { id: "check", icon: "circle-check", label: "Check", color: "#2783DE" },
+  { id: "idea", icon: "lightbulb", label: "Idea", color: "#D5803B" },
+  { id: "question", icon: "circle-help", label: "Question", color: "#9B6BC1" },
+  { id: "flame", icon: "flame", label: "Flame", color: "#E56458" },
+  { id: "sparkles", icon: "sparkles", label: "Sparkles", color: "#9B6BC1" }
+];
+var normalizePreferences = (raw) => ({
+  dotGrid: raw?.dotGrid === true,
+  gridSpacing: Number.isFinite(raw?.gridSpacing) ? limit(raw.gridSpacing, 12, 64) : 24,
+  gridOpacity: Number.isFinite(raw?.gridOpacity) ? limit(raw.gridOpacity, 0.05, 0.4) : 0.15
+});
+var normalizeAngle = (n) => typeof n === "number" && Number.isFinite(n) ? (n % 360 + 540) % 360 - 180 : 0;
+var safeAssetPath = (p) => typeof p === "string" && !!p && !p.startsWith("/") && !p.includes("\\") && !p.split("/").some((s) => s === ".." || s === ".") && !/[:\x00-\x1f]/.test(p);
+function rotatedBounds(p) {
+  const a = (p.rotation ?? 0) * Math.PI / 180, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+  const width = p.width * c + p.height * s, height = p.width * s + p.height * c;
+  return {
+    ...p,
+    x: p.x + (p.width - width) / 2,
+    y: p.y + (p.height - height) / 2,
+    width,
+    height
+  };
+}
+function rotatedResize(p, dx, dy, h, minWidth = 24, minHeight = 24) {
+  const a = (p.rotation ?? 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  const next = resized(
+    p,
+    dx * c + dy * s,
+    -dx * s + dy * c,
+    h,
+    minWidth,
+    minHeight
+  );
+  const cx = next.x + next.width / 2 - (p.x + p.width / 2), cy = next.y + next.height / 2 - (p.y + p.height / 2);
+  return {
+    ...next,
+    rotation: p.rotation,
+    x: Math.max(0, p.x + p.width / 2 + cx * c - cy * s - next.width / 2),
+    y: Math.max(0, p.y + p.height / 2 + cx * s + cy * c - next.height / 2)
+  };
+}
+function tapeOnSticky(tape, parent) {
+  const a = (parent.rotation ?? 0) * Math.PI / 180, cx = parent.x + parent.width / 2, cy = parent.y + parent.height / 2;
+  return {
+    ...tape,
+    parentId: parent.id,
+    x: cx + Math.sin(a) * parent.height / 2 - tape.width / 2,
+    y: cy - Math.cos(a) * parent.height / 2 - tape.height / 2,
+    rotation: normalizeAngle(
+      (parent.rotation ?? 0) + (tape.rotationOffset ?? -8)
+    )
+  };
+}
 
 // src/spatial.ts
 var import_state = require("@codemirror/state");
 var import_view = require("@codemirror/view");
 var import_commands = require("@codemirror/commands");
+var import_obsidian4 = require("obsidian");
+
+// src/interaction.ts
 var import_obsidian = require("obsidian");
+function iconButton(parent, icon, label, callback) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "cv-icon-button";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  (0, import_obsidian.setIcon)(button, icon);
+  button.onclick = callback;
+  parent.append(button);
+  return button;
+}
+function previewGesture(event, options) {
+  event.preventDefault();
+  event.stopPropagation();
+  const { scroller, root, start } = options;
+  const origin = {
+    x: event.clientX,
+    y: event.clientY,
+    sx: scroller.scrollLeft,
+    sy: scroller.scrollTop
+  };
+  let current = { ...start };
+  let frame = 0;
+  let done = false;
+  root.classList.add("is-transforming");
+  scroller.classList.add("cv-has-gesture");
+  const paint = () => {
+    frame = 0;
+    root.style.transform = `translate3d(${current.x - start.x}px,${current.y - start.y}px,0)`;
+    if (current.width !== start.width) root.style.width = current.width + "px";
+    if (options.explicitHeight && current.height !== start.height)
+      root.style.height = current.height + "px";
+    options.preview?.(current);
+  };
+  const move = (e) => {
+    if (e.pointerId !== event.pointerId || done) return;
+    current = options.project(
+      e.clientX - origin.x + scroller.scrollLeft - origin.sx,
+      e.clientY - origin.y + scroller.scrollTop - origin.sy
+    );
+    if (!frame) frame = requestAnimationFrame(paint);
+  };
+  const finish = (cancel) => {
+    if (done) return;
+    done = true;
+    cancelAnimationFrame(frame);
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", cancelEvent);
+    window.removeEventListener("blur", blur);
+    const value = cancel ? start : current;
+    root.style.transform = "";
+    root.style.left = value.x + "px";
+    root.style.top = value.y + "px";
+    root.style.width = value.width + "px";
+    if (options.explicitHeight) root.style.height = value.height + "px";
+    root.classList.remove("is-transforming");
+    scroller.classList.remove("cv-has-gesture");
+    options.end?.();
+    if (!cancel && (value.x !== start.x || value.y !== start.y || value.width !== start.width || value.height !== start.height))
+      options.commit(value);
+    options.finishPreview?.();
+  };
+  const up = (e) => {
+    if (e.pointerId !== event.pointerId) return;
+    move(e);
+    finish(false);
+  };
+  const cancelEvent = (e) => {
+    if (e.pointerId === event.pointerId) finish(true);
+  };
+  const blur = () => finish(true);
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", cancelEvent);
+  window.addEventListener("blur", blur);
+  return () => finish(true);
+}
+var Selection = class {
+  constructor(scroller) {
+    this.scroller = scroller;
+  }
+  current = null;
+  select(item) {
+    if (this.current !== item) {
+      this.current?.root.querySelectorAll(".cv-property-popover").forEach((n) => n.remove());
+      this.current?.root.classList.remove("is-selected");
+      this.current = item;
+      item?.root.classList.add("is-selected");
+    }
+    this.position();
+  }
+  position() {
+    const item = this.current;
+    if (!item) return;
+    const p = item.position();
+    const bounds = item.bounds?.() ?? p;
+    const outside = bounds.x + bounds.width < this.scroller.scrollLeft || bounds.x > this.scroller.scrollLeft + this.scroller.clientWidth || bounds.y + bounds.height < this.scroller.scrollTop || bounds.y > this.scroller.scrollTop + this.scroller.clientHeight;
+    item.toolbar.hidden = outside;
+    if (outside) return;
+    const width = item.toolbar.offsetWidth || 240;
+    const left = this.scroller.scrollLeft, top = this.scroller.scrollTop;
+    item.toolbar.style.left = limit(
+      bounds.x - p.x,
+      left + 8 - p.x,
+      left + this.scroller.clientWidth - width - 8 - p.x
+    ) + "px";
+    item.toolbar.style.top = Math.max(
+      bounds.y - p.y - (item.toolbar.offsetHeight || 40) - 8,
+      top + 8 - p.y
+    ) + "px";
+  }
+  remove(item) {
+    if (this.current === item) this.select(null);
+  }
+};
+function addHandles(parent, onPointer, onKey) {
+  for (const h of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cv-resize-handle cv-handle-" + h;
+    b.setAttribute("aria-label", h === "se" ? "Resize block" : "Resize " + h);
+    b.onpointerdown = (e) => onPointer(e, h);
+    b.onkeydown = (e) => onKey(e, h);
+    parent.append(b);
+  }
+}
+function leftGrip(root, read, drag, key) {
+  const b = iconButton(
+    root,
+    "grip-vertical",
+    "Move object from left",
+    () => root.focus({ preventScroll: true })
+  );
+  b.classList.add("cv-object-grip");
+  b.onpointerdown = drag;
+  if (key) b.onkeydown = key;
+  return () => {
+    const p = read(), a = rotatedBounds(p);
+    b.style.left = a.x - p.x - 36 + "px";
+    b.style.top = a.y - p.y + a.height / 2 - 16 + "px";
+  };
+}
+function rotationField(parent, value, change) {
+  const label = document.createElement("label");
+  label.className = "cv-rotation-field";
+  label.textContent = "Rotation";
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = "-180";
+  input.max = "180";
+  input.step = "1";
+  input.value = String(Math.round(value));
+  input.setAttribute("aria-label", "Rotation degrees");
+  input.onchange = () => {
+    const n = normalizeAngle(Number(input.value));
+    input.value = String(n);
+    change(n);
+  };
+  label.append(input);
+  parent.append(label);
+  return input;
+}
+function rotationHandle(root, frame, read, commit, preview) {
+  let cleanup = null;
+  const b = iconButton(
+    frame,
+    "rotate-cw",
+    "Rotate object",
+    () => root.focus({ preventScroll: true })
+  );
+  b.classList.add("cv-rotation-handle");
+  b.onkeydown = (e) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    commit(
+      normalizeAngle(
+        (read().rotation ?? 0) + (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 15 : 1)
+      )
+    );
+  };
+  b.onpointerdown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cleanup?.();
+    const p = read(), r = root.getBoundingClientRect(), cx = r.left + p.width / 2, cy = r.top + p.height / 2;
+    const initial = Math.atan2(e.clientY - cy, e.clientX - cx);
+    let angle = p.rotation ?? 0, raf = 0, done = false;
+    const move = (ev) => {
+      if (ev.pointerId !== e.pointerId) return;
+      angle = normalizeAngle(
+        (p.rotation ?? 0) + (Math.atan2(ev.clientY - cy, ev.clientX - cx) - initial) * 180 / Math.PI
+      );
+      if (ev.shiftKey) angle = Math.round(angle / 15) * 15;
+      if (!raf)
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          frame.style.rotate = angle + "deg";
+          preview?.({ ...p, rotation: angle });
+        });
+    };
+    const finish = (cancelled) => {
+      if (done) return;
+      done = true;
+      cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", blur);
+      frame.style.rotate = (cancelled ? p.rotation ?? 0 : angle) + "deg";
+      cleanup = null;
+      if (!cancelled) commit(angle);
+      preview?.(null);
+    };
+    const up = (ev) => {
+      if (ev.pointerId === e.pointerId) {
+        move(ev);
+        finish(false);
+      }
+    };
+    const cancel = (ev) => {
+      if (ev.pointerId === e.pointerId) finish(true);
+    };
+    const blur = () => finish(true);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", blur);
+    cleanup = () => finish(true);
+  };
+  return () => cleanup?.();
+}
+
+// src/design-tools.ts
+var import_obsidian3 = require("obsidian");
+
+// src/icon-picker.ts
+var import_obsidian2 = require("obsidian");
+function iconPicker(parent, selected, pick) {
+  const search = document.createElement("input");
+  search.type = "search";
+  search.placeholder = "Search Obsidian icons\u2026";
+  search.setAttribute("aria-label", "Search Obsidian icons");
+  search.className = "cv-icon-search";
+  const grid = document.createElement("div");
+  grid.className = "cv-icon-grid";
+  const status = document.createElement("p");
+  status.className = "cv-icon-status";
+  status.setAttribute("aria-live", "polite");
+  const ids = (0, import_obsidian2.getIconIds)();
+  const render = () => {
+    const query = search.value.trim().toLowerCase();
+    const found = ids.filter((id) => id.toLowerCase().includes(query));
+    grid.replaceChildren();
+    for (const id of found.slice(0, 60)) {
+      const b = iconButton(grid, id, id, () => {
+        selected = id;
+        pick(id);
+        grid.querySelectorAll("button").forEach((n) => n.setAttribute("aria-pressed", String(n === b)));
+      });
+      b.setAttribute("aria-pressed", String(selected === id));
+    }
+    status.textContent = found.length ? `${Math.min(60, found.length)} of ${found.length} icons${found.length > 60 ? " \u2014 refine search" : ""}` : "No matching icons";
+  };
+  search.oninput = render;
+  parent.append(search, grid, status);
+  render();
+}
+
+// src/tool-options.ts
+var COLORS = [
+  "currentColor",
+  "#2783DE",
+  "#46A171",
+  "#EAC26B",
+  "#D5803B",
+  "#E56458",
+  "#9B6BC1"
+];
+var PAPERS = [
+  "#FFF0AD",
+  "#E5F2FC",
+  "#DDF1E4",
+  "#FBE4E3",
+  "#ECE3F5",
+  "#F0EFED"
+];
+function defaultStyle(mode) {
+  return {
+    stroke: "currentColor",
+    strokeWidth: mode === "highlighter" ? 24 : 2,
+    opacity: mode === "highlighter" ? 0.35 : mode === "tape" ? 0.45 : 1,
+    fill: mode === "tape" ? "#D5803B" : mode === "sticky" ? PAPERS[0] : mode === "label" ? PAPERS[1] : "none",
+    fontSize: 18,
+    sticker: "star",
+    iconId: "star",
+    ...mode === "highlighter" ? { stroke: "#EAC26B" } : {}
+  };
+}
+function stylePanel(parent, kind, value, change) {
+  const panel = document.createElement("div");
+  panel.className = "cv-style-panel";
+  panel.setAttribute("role", "group");
+  panel.setAttribute("aria-label", "Appearance settings");
+  parent.append(panel);
+  const textKind = [
+    "sticky",
+    "label",
+    "text",
+    "section",
+    "table",
+    "code"
+  ].includes(kind);
+  const row = (label) => {
+    const wrap = document.createElement("div");
+    wrap.className = "cv-option-row";
+    const caption = document.createElement("span");
+    caption.textContent = label;
+    wrap.append(caption);
+    panel.append(wrap);
+    return wrap;
+  };
+  const swatches = (label, colors, key) => {
+    const wrap = row(label);
+    const group = document.createElement("div");
+    group.className = "cv-swatch-grid";
+    wrap.append(group);
+    for (const color of colors) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "cv-color-swatch";
+      b.style.setProperty(
+        "--swatch",
+        color === "currentColor" ? "var(--text-normal)" : color === "none" ? "transparent" : color
+      );
+      b.setAttribute("aria-label", label + " " + color);
+      b.title = color === "none" ? "No fill" : color;
+      b.setAttribute("aria-pressed", String(value[key] === color));
+      b.onclick = () => {
+        value = { ...value, [key]: color };
+        change({ [key]: color });
+        group.querySelectorAll("button").forEach((n) => n.setAttribute("aria-pressed", String(n === b)));
+      };
+      group.append(b);
+    }
+    const custom = document.createElement("input");
+    custom.type = "color";
+    custom.title = "Custom " + label.toLowerCase();
+    custom.setAttribute("aria-label", custom.title);
+    custom.value = value[key].startsWith("#") ? value[key] : "#2783DE";
+    custom.onchange = () => {
+      value = { ...value, [key]: custom.value };
+      change({ [key]: custom.value });
+      group.querySelectorAll("button").forEach((n) => n.setAttribute("aria-pressed", "false"));
+    };
+    group.append(custom);
+  };
+  const number2 = (label, key, min, max, step) => {
+    const wrap = row(label);
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.value = String(value[key]);
+    input.setAttribute("aria-label", label);
+    const output = document.createElement("output");
+    const display = () => {
+      output.textContent = key === "opacity" ? Math.round(Number(input.value) * 100) + "%" : input.value + " px";
+    };
+    display();
+    input.oninput = display;
+    input.onchange = () => {
+      value = { ...value, [key]: Number(input.value) };
+      change({ [key]: Number(input.value) });
+      display();
+    };
+    wrap.append(input, output);
+  };
+  if (kind === "icon") {
+    iconPicker(panel, value.iconId ?? "star", (iconId) => change({ iconId }));
+    swatches("Icon color", COLORS, "stroke");
+  } else if (kind === "image") {
+    number2("Opacity", "opacity", 0.1, 1, 0.05);
+  } else if (kind === "tape") {
+    swatches("Tape color", ["#D5803B", ...PAPERS], "fill");
+    number2("Opacity", "opacity", 0.1, 1, 0.05);
+  } else if (kind === "sticker") {
+    const stamps = row("Sticker");
+    const grid = document.createElement("div");
+    grid.className = "cv-sticker-grid";
+    stamps.append(grid);
+    for (const stamp of STICKERS) {
+      const b = iconButton(grid, stamp.icon, stamp.label, () => {
+        value = { ...value, sticker: stamp.id };
+        change({ sticker: stamp.id });
+        grid.querySelectorAll("button").forEach((n) => n.setAttribute("aria-pressed", String(n === b)));
+      });
+      b.style.color = stamp.color;
+      b.setAttribute("aria-pressed", String(value.sticker === stamp.id));
+    }
+  } else {
+    swatches(textKind ? "Text color" : "Stroke color", COLORS, "stroke");
+    if (textKind || ["rect", "ellipse", "diamond", "triangle"].includes(kind))
+      swatches("Fill", textKind ? PAPERS : ["none", ...PAPERS], "fill");
+    if (textKind) number2("Font size", "fontSize", 12, 48, 1);
+    else number2("Size", "strokeWidth", 1, 32, 1);
+    number2("Opacity", "opacity", 0.1, 1, 0.05);
+  }
+  return panel;
+}
+function drawingStyle(d) {
+  return {
+    ...defaultStyle(d.kind),
+    ...d,
+    fill: d.fill ?? "none",
+    fontSize: d.fontSize ?? 18,
+    sticker: d.sticker ?? "star"
+  };
+}
+
+// src/design-tools.ts
+function confirmAction(app, title, message, label, confirm) {
+  class Confirm extends import_obsidian3.Modal {
+    onOpen() {
+      this.titleEl.textContent = title;
+      const p = document.createElement("p");
+      p.textContent = message;
+      this.contentEl.append(p);
+      const row = document.createElement("div");
+      row.className = "cv-confirm-actions";
+      this.contentEl.append(row);
+      const cancel = document.createElement("button");
+      cancel.textContent = "Cancel";
+      cancel.onclick = () => this.close();
+      const apply = document.createElement("button");
+      apply.className = "mod-warning";
+      apply.textContent = label;
+      apply.onclick = () => {
+        this.close();
+        confirm();
+      };
+      row.append(cancel, apply);
+      cancel.focus();
+    }
+    onClose() {
+      this.contentEl.replaceChildren();
+    }
+  }
+  new Confirm(app).open();
+}
+var NS = "http://www.w3.org/2000/svg";
+function drawingSVG(d) {
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${d.width} ${d.height}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.classList.add("cv-vector");
+  let shape;
+  if (d.kind === "rect") {
+    shape = document.createElementNS(NS, "rect");
+    shape.setAttribute("x", "1");
+    shape.setAttribute("y", "1");
+    shape.setAttribute("width", String(Math.max(1, d.width - 2)));
+    shape.setAttribute("height", String(Math.max(1, d.height - 2)));
+    shape.setAttribute("rx", "4");
+  } else if (d.kind === "ellipse") {
+    shape = document.createElementNS(NS, "ellipse");
+    shape.setAttribute("cx", String(d.width / 2));
+    shape.setAttribute("cy", String(d.height / 2));
+    shape.setAttribute("rx", String(Math.max(1, d.width / 2 - 1)));
+    shape.setAttribute("ry", String(Math.max(1, d.height / 2 - 1)));
+  } else if (d.kind === "triangle") {
+    shape = document.createElementNS(NS, "polygon");
+    shape.setAttribute(
+      "points",
+      `${d.width / 2},1 ${d.width - 1},${d.height - 1} 1,${d.height - 1}`
+    );
+  } else if (d.kind === "tape") {
+    shape = document.createElementNS(NS, "polygon");
+    const w = d.width, h = d.height;
+    shape.setAttribute(
+      "points",
+      `0,0 ${w},2 ${w - 5},${h * 0.25} ${w},${h * 0.5} ${w - 6},${h * 0.75} ${w},${h} 2,${h - 1} 7,${h * 0.75} 1,${h * 0.5} 6,${h * 0.25}`
+    );
+  } else if (d.kind === "diamond") {
+    shape = document.createElementNS(NS, "polygon");
+    shape.setAttribute(
+      "points",
+      `${d.width / 2},1 ${d.width - 1},${d.height / 2} ${d.width / 2},${d.height - 1} 1,${d.height / 2}`
+    );
+  } else {
+    shape = document.createElementNS(NS, "path");
+    const pts = d.points ?? [
+      [0, 0],
+      [1, 1]
+    ];
+    shape.setAttribute(
+      "d",
+      pts.map(
+        (p, i) => `${i ? "L" : "M"}${(p[0] * d.width).toFixed(2)},${(p[1] * d.height).toFixed(2)}`
+      ).join(" ")
+    );
+  }
+  shape.setAttribute(
+    "fill",
+    ["rect", "ellipse", "diamond", "triangle", "tape"].includes(d.kind) ? d.fill ?? "none" : "none"
+  );
+  shape.setAttribute("stroke", d.kind === "tape" ? "none" : d.stroke);
+  shape.setAttribute("stroke-width", String(d.strokeWidth));
+  shape.setAttribute("stroke-linecap", "round");
+  shape.setAttribute("stroke-linejoin", "round");
+  shape.setAttribute("vector-effect", "non-scaling-stroke");
+  shape.setAttribute("opacity", String(d.opacity));
+  svg.append(shape);
+  if (d.kind === "arrow") {
+    const pts = d.points ?? [
+      [0, 0],
+      [1, 1]
+    ];
+    const a = pts[0], b = pts[pts.length - 1];
+    const angle = Math.atan2((b[1] - a[1]) * d.height, (b[0] - a[0]) * d.width);
+    const size = Math.max(12, d.strokeWidth * 3);
+    const head = document.createElementNS(NS, "path");
+    const x = b[0] * d.width, y = b[1] * d.height;
+    head.setAttribute(
+      "d",
+      `M${x - size * Math.cos(angle - 0.5)},${y - size * Math.sin(angle - 0.5)} L${x},${y} L${x - size * Math.cos(angle + 0.5)},${y - size * Math.sin(angle + 0.5)}`
+    );
+    head.setAttribute("stroke", d.stroke);
+    head.setAttribute("stroke-width", String(d.strokeWidth));
+    head.setAttribute("fill", "none");
+    head.setAttribute("opacity", String(d.opacity));
+    head.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.append(head);
+  }
+  return svg;
+}
+var DesignTools = class {
+  constructor(view, layer, selection, app, cb) {
+    this.view = view;
+    this.layer = layer;
+    this.selection = selection;
+    this.app = app;
+    this.cb = cb;
+    view.dom.classList.add("cv-design-editor");
+    this.dock = document.createElement("div");
+    this.dock.className = "cv-tool-dock";
+    this.dock.setAttribute("role", "toolbar");
+    this.dock.setAttribute("aria-label", "Note design tools");
+    this.dock.dir = "ltr";
+    this.dock.contentEditable = "false";
+    this.dock.addEventListener("mousedown", (e) => e.stopPropagation());
+    view.dom.append(this.dock);
+    this.tray = document.createElement("div");
+    this.tray.className = "cv-tool-tray";
+    this.tray.hidden = true;
+    this.dock.append(this.tray);
+    this.outside = (e) => {
+      if (!e.target?.closest(".cv-tool-dock"))
+        this.tray.hidden = true;
+    };
+    view.dom.addEventListener("pointerdown", this.outside);
+    this.cleanups.push(
+      () => view.dom.removeEventListener("pointerdown", this.outside)
+    );
+    const select = iconButton(
+      this.dock,
+      "mouse-pointer-2",
+      "Select objects",
+      () => this.setMode("select")
+    );
+    select.dataset.tool = "select";
+    const groups = [
+      ["Draw tools", "pencil", ["pen", "highlighter", "tape"]],
+      [
+        "Shapes and lines",
+        "shapes",
+        ["rect", "ellipse", "diamond", "triangle", "line", "arrow"]
+      ],
+      [
+        "Notes and labels",
+        "sticky-note",
+        ["sticky", "label", "text", "section", "table", "code"]
+      ],
+      ["Stickers", "stamp", ["sticker"]],
+      ["Images and icons", "image-plus", ["image", "icon"]]
+    ];
+    for (const [label, icon, modes] of groups) {
+      const b = iconButton(
+        this.dock,
+        icon,
+        label,
+        () => this.openGroup(label, [...modes])
+      );
+      b.dataset.group = label;
+      b.setAttribute("aria-expanded", "false");
+    }
+    iconButton(this.dock, "sliders-horizontal", "Tool settings", () => {
+      if (this.mode === "select") {
+        if (this.selection.current?.openSettings)
+          this.selection.current.openSettings();
+        else this.cb.openPreferences();
+      } else this.openOptions();
+    });
+    iconButton(
+      this.dock,
+      "settings",
+      "Plugin settings",
+      () => this.cb.openPreferences()
+    );
+    const toggle = iconButton(
+      this.dock,
+      "wand-sparkles",
+      "Toggle note effects",
+      () => this.cb.toggle()
+    );
+    toggle.dataset.persistent = "true";
+    this.dock.append(this.divider());
+    iconButton(this.dock, "undo-2", "Undo drawing", () => this.undo());
+    iconButton(this.dock, "redo-2", "Redo drawing", () => this.redo());
+    this.dock.append(this.divider());
+    iconButton(
+      this.dock,
+      "rotate-ccw",
+      "Reset entire note layout",
+      () => confirmAction(
+        this.app,
+        "Reset this note\u2019s layout?",
+        "Return floating blocks to normal text flow and remove drawings, sticky notes, labels and stickers from this note. Original Markdown will not be deleted. Annotation text is stored in plugin data, not in Markdown.",
+        "Reset layout",
+        () => {
+          this.setMode("select");
+          this.selection.select(null);
+          this.history.push(this.cb.read().drawings);
+          this.future = [];
+          this.cb.reset();
+        }
+      )
+    );
+    this.catcher = document.createElement("div");
+    this.catcher.className = "cv-drawing-catcher";
+    this.catcher.hidden = true;
+    this.catcher.setAttribute("aria-label", "Draw inside this note");
+    view.scrollDOM.append(this.catcher);
+    this.catcher.onpointerdown = (e) => this.beginDrawing(e);
+    const scroll = () => {
+      if (this.scrollFrame) return;
+      this.scrollFrame = requestAnimationFrame(() => {
+        this.scrollFrame = 0;
+        this.positionCatcher();
+        this.selection.position();
+      });
+    };
+    view.scrollDOM.addEventListener("scroll", scroll, { passive: true });
+    this.cleanups.push(
+      () => view.scrollDOM.removeEventListener("scroll", scroll)
+    );
+    const deselect = (e) => {
+      if (!(e.target instanceof Element)) return;
+      if (!e.target.closest(
+        ".cv-floating-block,.cv-drawing-object,.cv-tool-dock,.cv-context-toolbar"
+      ))
+        this.selection.select(null);
+    };
+    view.dom.addEventListener("pointerdown", deselect);
+    this.cleanups.push(
+      () => view.dom.removeEventListener("pointerdown", deselect)
+    );
+    const key = (e) => {
+      const target = e.target;
+      if (target.closest("textarea,input,select,.cm-content")) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.disposeDrawing?.();
+        this.setMode("select");
+        this.tray.hidden = true;
+        this.selection.select(null);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && (target.closest(".cv-tool-dock,.cv-drawing-object") || this.selection.current?.root.classList.contains("cv-drawing-object"))) {
+        e.preventDefault();
+        e.stopPropagation();
+        (e.shiftKey ? this.redo : this.undo).call(this);
+      }
+    };
+    view.dom.addEventListener("keydown", key, true);
+    this.cleanups.push(
+      () => view.dom.removeEventListener("keydown", key, true)
+    );
+  }
+  dock;
+  mode = "select";
+  catcher;
+  shapes = /* @__PURE__ */ new Map();
+  draft = null;
+  disposeDrawing = null;
+  history = [];
+  future = [];
+  path = "";
+  options = /* @__PURE__ */ new Map();
+  tray;
+  outside;
+  scrollFrame = 0;
+  cleanups = [];
+  divider() {
+    const d = document.createElement("span");
+    d.className = "cv-tool-divider";
+    d.setAttribute("aria-hidden", "true");
+    return d;
+  }
+  names = {
+    pen: "Draw with pen",
+    highlighter: "Draw with highlighter",
+    tape: "Add decorative tape",
+    rect: "Draw rectangle",
+    ellipse: "Draw ellipse",
+    diamond: "Draw diamond",
+    triangle: "Draw triangle",
+    line: "Draw line",
+    arrow: "Draw arrow",
+    sticky: "Add sticky note",
+    label: "Add label",
+    text: "Add text annotation",
+    section: "Add section",
+    table: "Add table annotation",
+    code: "Add code annotation",
+    sticker: "Add sticker",
+    image: "Import image from computer",
+    icon: "Add Obsidian icon"
+  };
+  openGroup(label, modes) {
+    this.tray.replaceChildren();
+    this.tray.hidden = false;
+    const title = document.createElement("div");
+    title.className = "cv-tray-title";
+    title.textContent = label;
+    this.tray.append(title);
+    const grid = document.createElement("div");
+    grid.className = "cv-tool-choices";
+    this.tray.append(grid);
+    const icons = {
+      pen: "pencil",
+      highlighter: "highlighter",
+      tape: "tape",
+      rect: "square",
+      ellipse: "circle",
+      diamond: "diamond",
+      triangle: "triangle",
+      line: "minus",
+      arrow: "arrow-up-right",
+      sticky: "sticky-note",
+      label: "tag",
+      text: "type",
+      section: "group",
+      table: "table",
+      code: "code",
+      sticker: "stamp",
+      image: "image-plus",
+      icon: "search"
+    };
+    for (const mode of modes) {
+      const b = iconButton(grid, icons[mode], this.names[mode], () => {
+        if (mode === "image") {
+          this.pickImage();
+          return;
+        }
+        const close = this.mode === mode && b.getAttribute("aria-pressed") === "true";
+        this.setMode(mode);
+        if (!close) this.openOptions();
+      });
+      b.dataset.tool = mode;
+      b.setAttribute("aria-pressed", String(this.mode === mode));
+      const text = document.createElement("span");
+      text.textContent = this.names[mode];
+      b.append(text);
+    }
+  }
+  pickImage() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/gif,image/webp";
+    input.setAttribute("aria-label", "Choose local image");
+    input.className = "cv-file-input";
+    this.dock.append(input);
+    input.oncancel = () => input.remove();
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      const path = this.cb.read().path;
+      try {
+        const asset = await this.cb.importImage(file, path);
+        const state = this.cb.read();
+        if (state.path !== path || !state.enabled || !this.dock.isConnected) {
+          this.cb.notify(
+            "Image copied to vault; note changed before placement. The file was kept."
+          );
+          return;
+        }
+        const s = this.view.scrollDOM;
+        const value = {
+          ...defaultStyle("image"),
+          ...asset,
+          id: crypto.randomUUID(),
+          kind: "image",
+          x: s.scrollLeft + Math.max(40, (s.clientWidth - asset.width) / 2),
+          y: s.scrollTop + 100
+        };
+        this.commit([...state.drawings, value]);
+        this.setMode("select");
+        this.selection.select(this.shapes.get(value.id) ?? null);
+      } catch (e) {
+        this.cb.notify(String(e));
+      }
+    };
+    input.click();
+  }
+  settings() {
+    if (!this.options.has(this.mode))
+      this.options.set(
+        this.mode,
+        this.cb.getDefaults()[this.mode] ?? defaultStyle(this.mode)
+      );
+    return this.options.get(this.mode);
+  }
+  openOptions() {
+    if (this.mode === "select") {
+      this.cb.openPreferences();
+      return;
+    }
+    this.tray.replaceChildren();
+    const title = document.createElement("div");
+    title.className = "cv-tray-title";
+    title.textContent = {
+      pen: "Pen",
+      highlighter: "Highlighter",
+      sticky: "Sticky note",
+      label: "Label",
+      sticker: "Stickers"
+    }[this.mode] ?? "Shape";
+    this.tray.append(title);
+    const close = iconButton(this.tray, "x", "Close tool settings", () => {
+      this.tray.hidden = true;
+    });
+    close.classList.add("cv-tray-close");
+    stylePanel(this.tray, this.mode, this.settings(), (patch) => {
+      this.options.set(this.mode, { ...this.settings(), ...patch });
+      this.cb.saveDefault(this.mode, this.settings());
+    });
+    this.tray.hidden = false;
+  }
+  setMode(mode) {
+    if (mode !== this.mode) this.disposeDrawing?.();
+    this.mode = mode;
+    const groupFor = {
+      pen: "Draw tools",
+      highlighter: "Draw tools",
+      tape: "Draw tools",
+      rect: "Shapes and lines",
+      ellipse: "Shapes and lines",
+      diamond: "Shapes and lines",
+      triangle: "Shapes and lines",
+      line: "Shapes and lines",
+      arrow: "Shapes and lines",
+      sticky: "Notes and labels",
+      label: "Notes and labels",
+      text: "Notes and labels",
+      section: "Notes and labels",
+      table: "Notes and labels",
+      code: "Notes and labels",
+      sticker: "Stickers",
+      icon: "Images and icons"
+    };
+    this.dock.querySelectorAll("[data-group]").forEach(
+      (b) => b.setAttribute(
+        "aria-pressed",
+        String(b.dataset.group === groupFor[mode])
+      )
+    );
+    this.tray.hidden = true;
+    this.layer.classList.toggle("is-drawing-mode", mode !== "select");
+    if (mode !== "select") this.selection.select(null);
+    for (const b of Array.from(
+      this.dock.querySelectorAll("[data-tool]")
+    ))
+      b.setAttribute("aria-pressed", String(b.dataset.tool === mode));
+    this.catcher.hidden = mode === "select" || !this.cb.read().enabled || !this.cb.read().live;
+    if (!this.catcher.hidden) this.positionCatcher();
+  }
+  positionCatcher() {
+    if (this.catcher.hidden) return;
+    const s = this.view.scrollDOM;
+    Object.assign(this.catcher.style, {
+      left: s.scrollLeft + "px",
+      top: s.scrollTop + "px",
+      width: s.clientWidth + "px",
+      height: s.clientHeight + "px"
+    });
+  }
+  sync() {
+    const state = this.cb.read();
+    if (state.path !== this.path) {
+      this.path = state.path;
+      this.history = [];
+      this.future = [];
+      this.selection.select(null);
+      this.setMode("select");
+    }
+    const show = state.enabled && state.live && !!state.path;
+    this.dock.hidden = !state.live || !state.path;
+    this.dock.classList.toggle("cv-effects-off", !state.enabled);
+    const toggle = this.dock.querySelector(
+      '[aria-label="Toggle note effects"]'
+    );
+    toggle?.setAttribute("aria-pressed", String(state.enabled));
+    const prefs = this.cb.getPreferences();
+    this.view.scrollDOM.classList.toggle("cv-dot-grid", show && prefs.dotGrid);
+    this.view.scrollDOM.style.setProperty(
+      "--cv-grid-spacing",
+      prefs.gridSpacing + "px"
+    );
+    this.view.scrollDOM.style.setProperty(
+      "--cv-grid-opacity",
+      String(prefs.gridOpacity)
+    );
+    if (!show) this.setMode("select");
+    for (const [id, obj] of this.shapes)
+      if (!show || !state.drawings.some((d) => d.id === id)) {
+        obj.destroy();
+        this.shapes.delete(id);
+      }
+    if (show)
+      for (const d of state.drawings) {
+        let object = this.shapes.get(d.id);
+        if (!object) {
+          object = new DrawingObject(
+            d,
+            this.view,
+            this.layer,
+            this.selection,
+            (next) => this.change(next),
+            () => this.remove(d.id),
+            (text) => this.cb.recover(state.path, text),
+            (path) => this.cb.imageURL(path),
+            () => this.duplicate(d.id),
+            () => this.tapeSticky(d.id),
+            (p) => this.previewChildren(d.id, p)
+          );
+          this.shapes.set(d.id, object);
+        }
+        if (object.value !== d) object.update(d);
+      }
+    for (const label of ["Undo drawing", "Redo drawing"]) {
+      const button = this.dock.querySelector(
+        `[aria-label="${label}"]`
+      );
+      if (button)
+        button.disabled = label === "Undo drawing" ? !this.history.length : !this.future.length;
+    }
+    this.selection.position();
+  }
+  change(value) {
+    const all = this.cb.read().drawings, old = all.find((d) => d.id === value.id);
+    if (value.parentId) {
+      const parent = all.find((d) => d.id === value.parentId);
+      if (old && (old.x !== value.x || old.y !== value.y))
+        value = { ...value, parentId: void 0 };
+      else if (parent)
+        value = {
+          ...value,
+          rotationOffset: (value.rotation ?? 0) - (parent.rotation ?? 0)
+        };
+    }
+    this.commit(
+      all.map(
+        (d) => d.id === value.id ? value : d.parentId === value.id ? tapeOnSticky(d, value) : d
+      )
+    );
+  }
+  previewChildren(id, placement) {
+    const parent = this.shapes.get(id);
+    if (!parent) return;
+    for (const child of this.shapes.values())
+      if (child.value.parentId === id) {
+        if (placement)
+          child.previewPlacement(
+            tapeOnSticky(child.value, { ...parent.value, ...placement })
+          );
+        else child.update(child.value);
+      }
+  }
+  tapeSticky(id) {
+    const parent = this.cb.read().drawings.find((d) => d.id === id);
+    if (!parent) return;
+    const tape = tapeOnSticky(
+      {
+        ...this.options.get("tape") ?? this.cb.getDefaults().tape ?? defaultStyle("tape"),
+        id: crypto.randomUUID(),
+        kind: "tape",
+        x: 0,
+        y: 0,
+        width: Math.min(140, parent.width * 0.65),
+        height: 32,
+        rotationOffset: -8
+      },
+      parent
+    );
+    this.commit([...this.cb.read().drawings, tape]);
+    this.selection.select(this.shapes.get(tape.id) ?? null);
+  }
+  duplicate(id) {
+    const old = this.cb.read().drawings.find((d) => d.id === id);
+    if (!old) return;
+    const next = {
+      ...old,
+      id: crypto.randomUUID(),
+      x: limit(old.x + 32, 0, 5e4),
+      y: limit(old.y + 32, 0, 5e4),
+      parentId: void 0
+    };
+    this.commit([...this.cb.read().drawings, next]);
+    this.selection.select(this.shapes.get(next.id) ?? null);
+  }
+  remove(id) {
+    this.commit(
+      this.cb.read().drawings.filter((d) => d.id !== id && d.parentId !== id)
+    );
+    this.dock.querySelector("[data-tool=select]")?.focus({ preventScroll: true });
+  }
+  commit(next) {
+    this.history.push(this.cb.read().drawings);
+    if (this.history.length > 40) this.history.shift();
+    this.future = [];
+    this.cb.setDrawings(next);
+  }
+  undo() {
+    const previous = this.history.pop();
+    if (!previous) return;
+    this.future.push(this.cb.read().drawings);
+    this.cb.setDrawings(previous);
+  }
+  redo() {
+    const next = this.future.pop();
+    if (!next) return;
+    this.history.push(this.cb.read().drawings);
+    this.cb.setDrawings(next);
+  }
+  point(e) {
+    const rect = this.view.scrollDOM.getBoundingClientRect();
+    return [
+      limit(e.clientX - rect.left + this.view.scrollDOM.scrollLeft, 0, 5e4),
+      limit(e.clientY - rect.top + this.view.scrollDOM.scrollTop, 0, 5e4)
+    ];
+  }
+  beginDrawing(event) {
+    if (event.button !== 0 || this.mode === "select") return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.disposeDrawing?.();
+    this.tray.hidden = true;
+    const mode = this.mode;
+    const settings = { ...this.settings() };
+    if ([
+      "sticky",
+      "label",
+      "sticker",
+      "tape",
+      "icon",
+      "text",
+      "section",
+      "table",
+      "code"
+    ].includes(mode)) {
+      const [x, y] = this.point(event);
+      const value2 = {
+        id: crypto.randomUUID(),
+        kind: mode,
+        x,
+        y,
+        width: ["sticker", "icon"].includes(mode) ? 80 : mode === "tape" ? 160 : ["section", "table", "code"].includes(mode) ? 400 : mode === "label" ? 180 : 240,
+        height: ["sticker", "icon"].includes(mode) ? 80 : mode === "tape" ? 36 : mode === "label" || mode === "text" ? 64 : 200,
+        ...settings,
+        text: mode === "sticky" ? "Your idea\u2026" : mode === "label" ? "Label" : mode === "text" ? "Text" : mode === "section" ? "Section" : mode === "table" ? "First cell	Second cell\nThird cell	Fourth cell" : mode === "code" ? 'const idea = "space to think";' : ""
+      };
+      this.commit([...this.cb.read().drawings, value2]);
+      this.setMode("select");
+      const object = this.shapes.get(value2.id);
+      this.selection.select(object ?? null);
+      if (["sticky", "label", "text", "section", "table", "code"].includes(mode))
+        object?.editText();
+      return;
+    }
+    const kind = mode === "highlighter" ? "pen" : mode;
+    const points = [this.point(event)];
+    let frame = 0;
+    let ended = false;
+    let value = null;
+    this.draft = document.createElement("div");
+    this.draft.className = "cv-drawing-preview";
+    this.layer.append(this.draft);
+    const paint = () => {
+      frame = 0;
+      value = drawingFromPoints(
+        kind,
+        points,
+        settings.stroke,
+        settings.strokeWidth,
+        settings.opacity
+      );
+      if (!value || !this.draft) return;
+      value.fill = settings.fill;
+      Object.assign(this.draft.style, {
+        left: value.x + "px",
+        top: value.y + "px",
+        width: value.width + "px",
+        height: value.height + "px"
+      });
+      this.draft.replaceChildren(drawingSVG(value));
+    };
+    const move = (e) => {
+      if (e.pointerId !== event.pointerId) return;
+      const p = this.point(e);
+      if (kind === "pen") {
+        const last = points[points.length - 1];
+        if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 1.5) return;
+        if (points.length < 5e3) points.push(p);
+        else points[points.length - 1] = p;
+      } else points[1] = p;
+      if (!frame) frame = requestAnimationFrame(paint);
+    };
+    const finish = (cancel) => {
+      if (ended) return;
+      ended = true;
+      cancelAnimationFrame(frame);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancelEvent);
+      window.removeEventListener("blur", blur);
+      if (!cancel) paint();
+      this.draft?.remove();
+      this.draft = null;
+      this.disposeDrawing = null;
+      if (!cancel && value) {
+        const id = value.id;
+        this.commit([...this.cb.read().drawings, value]);
+        this.selection.select(this.shapes.get(id) ?? null);
+      }
+    };
+    const up = (e) => {
+      if (e.pointerId === event.pointerId) {
+        move(e);
+        finish(false);
+      }
+    };
+    const cancelEvent = (e) => {
+      if (e.pointerId === event.pointerId) finish(true);
+    };
+    const blur = () => finish(true);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancelEvent);
+    window.addEventListener("blur", blur);
+    this.disposeDrawing = () => finish(true);
+  }
+  destroy() {
+    this.disposeDrawing?.();
+    cancelAnimationFrame(this.scrollFrame);
+    this.cleanups.forEach((f) => f());
+    this.shapes.forEach((o) => o.destroy());
+    this.shapes.clear();
+    this.catcher.remove();
+    this.view.scrollDOM.classList.remove("cv-dot-grid");
+    this.dock.remove();
+    this.view.dom.classList.remove("cv-design-editor");
+  }
+};
+var DrawingObject = class {
+  constructor(value, view, parent, selection, change, remove, recover, imageURL2, duplicate, addTape, children) {
+    this.value = value;
+    this.view = view;
+    this.selection = selection;
+    this.change = change;
+    this.remove = remove;
+    this.recover = recover;
+    this.imageURL = imageURL2;
+    this.duplicate = duplicate;
+    this.addTape = addTape;
+    this.children = children;
+    this.id = value.id;
+    this.root = document.createElement("div");
+    this.root.className = "cv-drawing-object";
+    this.root.tabIndex = 0;
+    this.root.onfocus = () => this.selection.select(this);
+    this.root.addEventListener("focusin", () => this.selection.select(this));
+    this.root.setAttribute("aria-label", value.kind + " drawing");
+    parent.append(this.root);
+    this.toolbar = document.createElement("div");
+    this.toolbar.className = "cv-context-toolbar";
+    this.toolbar.setAttribute("role", "toolbar");
+    this.toolbar.setAttribute("aria-label", "Selected drawing tools");
+    this.root.append(this.toolbar);
+    const grip = iconButton(
+      this.toolbar,
+      "move",
+      "Move drawing",
+      () => this.select()
+    );
+    grip.onpointerdown = (e) => this.gesture(e);
+    grip.onkeydown = (e) => this.key(e);
+    if (![
+      "sticky",
+      "label",
+      "sticker",
+      "image",
+      "icon",
+      "text",
+      "section",
+      "tape",
+      "table",
+      "code"
+    ].includes(value.kind)) {
+      iconButton(
+        this.toolbar,
+        "palette",
+        "Drawing color",
+        () => this.properties("color")
+      );
+      iconButton(
+        this.toolbar,
+        "sliders-horizontal",
+        "Brush thickness",
+        () => this.properties("width")
+      );
+    }
+    if (["sticky", "label", "text", "section", "table", "code"].includes(
+      value.kind
+    ))
+      iconButton(
+        this.toolbar,
+        "pencil",
+        "Edit annotation text",
+        () => this.editText()
+      );
+    iconButton(
+      this.toolbar,
+      "settings-2",
+      "Object appearance",
+      () => this.properties("all")
+    );
+    const del = iconButton(
+      this.toolbar,
+      "trash-2",
+      "Delete this drawing",
+      () => this.remove()
+    );
+    del.classList.add("cv-danger");
+    if (value.kind === "sticky")
+      iconButton(
+        this.toolbar,
+        "tape",
+        "Add tape to sticky",
+        () => this.addTape()
+      );
+    iconButton(
+      this.toolbar,
+      "copy",
+      "Duplicate object",
+      () => this.duplicate()
+    );
+    this.frame = document.createElement("div");
+    this.frame.className = "cv-rotated-frame";
+    this.root.append(this.frame);
+    this.updateGrip = leftGrip(
+      this.root,
+      () => this.value,
+      (e) => this.gesture(e),
+      (e) => this.key(e)
+    );
+    this.cancelRotate = rotationHandle(
+      this.root,
+      this.frame,
+      () => this.value,
+      (n) => {
+        this.change({ ...this.value, rotation: n });
+        this.selection.position();
+      },
+      (p) => this.children(p)
+    );
+    this.visual = document.createElement("div");
+    this.visual.className = "cv-drawing-visual";
+    this.frame.append(this.visual);
+    addHandles(
+      this.frame,
+      (e, h) => this.gesture(e, h),
+      (e, h) => this.key(e, h)
+    );
+    this.root.onpointerdown = (e) => {
+      if (e.target.closest(
+        "button,input,textarea,.cv-property-popover"
+      ))
+        return;
+      this.gesture(e);
+    };
+    this.root.ondblclick = () => this.editText();
+    this.root.onkeydown = (e) => {
+      if (e.target instanceof HTMLButtonElement || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+        return;
+      this.key(e);
+    };
+    this.root.addEventListener("pointerdown", (e) => e.stopPropagation());
+    this.update(value);
+  }
+  root;
+  toolbar;
+  id;
+  visual;
+  editing = false;
+  frame;
+  updateGrip;
+  cancelRotate;
+  input = null;
+  cancelGesture = null;
+  previewPlacement(p) {
+    Object.assign(this.root.style, {
+      left: p.x + "px",
+      top: p.y + "px",
+      width: p.width + "px",
+      height: p.height + "px"
+    });
+    this.frame.style.rotate = (p.rotation ?? 0) + "deg";
+  }
+  position = () => this.value;
+  bounds = () => rotatedBounds(this.value);
+  openSettings = () => this.properties("all");
+  select() {
+    this.selection.select(this);
+    this.root.focus({ preventScroll: true });
+  }
+  update(value) {
+    const old = this.value;
+    this.value = value;
+    Object.assign(this.root.style, {
+      left: value.x + "px",
+      top: value.y + "px",
+      width: value.width + "px",
+      height: value.height + "px"
+    });
+    this.root.style.zIndex = value.parentId ? "9" : "";
+    this.frame.style.rotate = (value.rotation ?? 0) + "deg";
+    this.updateGrip();
+    if (!this.editing && (!this.visual.firstChild || old !== value))
+      this.render();
+  }
+  render() {
+    const d = this.value;
+    this.root.dataset.kind = d.kind;
+    if (d.kind === "table") {
+      const table = document.createElement("table");
+      table.className = "cv-annotation-table";
+      for (const line of (d.text ?? "").split("\n").slice(0, 16)) {
+        const row = table.insertRow();
+        for (const cell of line.split("	").slice(0, 16)) {
+          const td = row.insertCell();
+          td.textContent = cell;
+          td.dir = "auto";
+        }
+      }
+      Object.assign(table.style, {
+        fontSize: (d.fontSize ?? 18) + "px",
+        color: d.stroke,
+        background: d.fill && d.fill !== "none" ? d.fill : "var(--background-primary)",
+        opacity: String(d.opacity)
+      });
+      this.visual.replaceChildren(table);
+    } else if (d.kind === "code") {
+      const pre = document.createElement("pre");
+      pre.className = "cv-code-annotation";
+      pre.textContent = d.text ?? "";
+      Object.assign(pre.style, {
+        fontSize: (d.fontSize ?? 16) + "px",
+        color: d.stroke,
+        background: d.fill && d.fill !== "none" ? d.fill : "var(--background-secondary)",
+        opacity: String(d.opacity)
+      });
+      this.visual.replaceChildren(pre);
+    } else if (["sticky", "label", "text", "section"].includes(d.kind)) {
+      const text = document.createElement("div");
+      text.className = "cv-annotation-text";
+      text.dir = "auto";
+      text.textContent = d.text ?? "";
+      Object.assign(text.style, {
+        background: d.fill && d.fill !== "none" ? d.fill : ["text", "section"].includes(d.kind) ? "transparent" : "#FFF0AD",
+        color: d.stroke === "currentColor" ? ["text", "section"].includes(d.kind) ? "var(--text-normal)" : "#2C2C2B" : d.stroke,
+        fontSize: (d.fontSize ?? 18) + "px",
+        opacity: String(d.opacity)
+      });
+      this.visual.replaceChildren(text);
+    } else if (d.kind === "image") {
+      const img = document.createElement("img");
+      img.alt = d.text || "Imported image";
+      img.draggable = false;
+      const url = d.assetPath ? this.imageURL(d.assetPath) : "";
+      if (url) img.src = url;
+      else img.alt = "Image file missing from vault";
+      img.style.opacity = String(d.opacity);
+      this.visual.replaceChildren(img);
+    } else if (d.kind === "icon") {
+      const el = document.createElement("div");
+      el.className = "cv-placed-icon";
+      el.style.color = d.stroke;
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", d.iconId ?? "star");
+      (0, import_obsidian3.setIcon)(el, d.iconId ?? "star");
+      this.visual.replaceChildren(el);
+    } else if (d.kind === "sticker") {
+      const stamp = STICKERS.find((s) => s.id === d.sticker) ?? STICKERS[0];
+      const el = document.createElement("div");
+      el.className = "cv-stamp-art";
+      el.style.color = stamp.color;
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", stamp.label);
+      (0, import_obsidian3.setIcon)(el, stamp.icon);
+      this.visual.replaceChildren(el);
+    } else this.visual.replaceChildren(drawingSVG(d));
+  }
+  editText() {
+    if (this.editing || !["sticky", "label", "text", "section", "table", "code"].includes(
+      this.value.kind
+    ))
+      return;
+    this.select();
+    this.editing = true;
+    this.root.classList.add("is-editing");
+    this.toolbar.querySelector(".cv-property-popover")?.remove();
+    const wrap = document.createElement("div");
+    wrap.className = "cv-annotation-edit";
+    const input = document.createElement("textarea");
+    this.input = input;
+    input.dir = "auto";
+    input.value = this.value.text ?? "";
+    input.maxLength = 1e4;
+    input.setAttribute("aria-label", "Annotation text");
+    input.style.fontSize = (this.value.fontSize ?? 18) + "px";
+    const row = document.createElement("div");
+    row.className = "cv-annotation-actions";
+    const editButton = this.toolbar.querySelector(
+      '[aria-label="Edit annotation text"]'
+    );
+    if (editButton) editButton.hidden = true;
+    this.toolbar.append(row);
+    const finish = (save) => {
+      const text = input.value;
+      this.editing = false;
+      this.input = null;
+      this.root.classList.remove("is-editing");
+      row.remove();
+      if (editButton) editButton.hidden = false;
+      if (save && text !== this.value.text)
+        this.change({ ...this.value, text });
+      this.render();
+      this.root.focus({ preventScroll: true });
+    };
+    iconButton(row, "check", "Save annotation", () => finish(true));
+    iconButton(row, "x", "Cancel annotation edit", () => finish(false));
+    input.onkeydown = (e) => {
+      if (e.isComposing) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(true);
+      }
+    };
+    wrap.append(input);
+    this.visual.replaceChildren(wrap);
+    input.focus({ preventScroll: true });
+    input.select();
+    this.selection.position();
+  }
+  properties(type) {
+    this.root.querySelector(".cv-property-popover")?.remove();
+    const menu = document.createElement("div");
+    menu.className = "cv-property-popover";
+    menu.setAttribute("role", "group");
+    menu.setAttribute(
+      "aria-label",
+      type === "all" ? "Object appearance settings" : type === "color" ? "Stroke colors" : "Brush weights"
+    );
+    this.toolbar.append(menu);
+    if (type === "all") {
+      menu.classList.add("cv-full-properties");
+      rotationField(menu, this.value.rotation ?? 0, (n) => {
+        this.change({ ...this.value, rotation: n });
+        this.selection.position();
+      });
+      stylePanel(
+        menu,
+        this.value.kind,
+        drawingStyle(this.value),
+        (patch) => this.change({ ...this.value, ...patch })
+      );
+    } else if (type === "color") {
+      for (const color of [
+        "currentColor",
+        "#2783DE",
+        "#46A171",
+        "#D5803B",
+        "#E56458"
+      ]) {
+        const b = document.createElement("button");
+        b.className = "cv-color-swatch";
+        b.style.setProperty(
+          "--swatch",
+          color === "currentColor" ? "var(--text-normal)" : color
+        );
+        b.setAttribute("aria-label", "Stroke " + color);
+        b.setAttribute("aria-pressed", String(this.value.stroke === color));
+        b.onclick = () => {
+          this.change({ ...this.value, stroke: color });
+          menu.remove();
+        };
+        menu.append(b);
+      }
+    } else
+      for (const width of [2, 4, 8, 16]) {
+        const b = document.createElement("button");
+        b.textContent = String(width);
+        b.setAttribute("aria-label", "Stroke width " + width);
+        b.setAttribute(
+          "aria-pressed",
+          String(this.value.strokeWidth === width)
+        );
+        b.onclick = () => {
+          this.change({ ...this.value, strokeWidth: width });
+          menu.remove();
+        };
+        menu.append(b);
+      }
+    this.selection.position();
+    const rect = this.view.scrollDOM.getBoundingClientRect();
+    const bar = this.toolbar.getBoundingClientRect();
+    menu.style.left = limit(
+      0,
+      rect.left + 8 - bar.left,
+      rect.right - 8 - bar.left - menu.offsetWidth
+    ) + "px";
+    menu.style.top = limit(
+      bar.height + 6,
+      rect.top + 8 - bar.top,
+      rect.bottom - 8 - bar.top - menu.offsetHeight
+    ) + "px";
+  }
+  gesture(e, h) {
+    if (e.button !== 0) return;
+    this.toolbar.querySelector(".cv-property-popover")?.remove();
+    this.select();
+    this.cancelGesture?.();
+    const start = { ...this.value };
+    this.cancelGesture = previewGesture(e, {
+      scroller: this.view.scrollDOM,
+      root: this.root,
+      start,
+      explicitHeight: true,
+      preview: (p) => this.children(p),
+      finishPreview: () => this.children(null),
+      project: (dx, dy) => h ? rotatedResize(start, dx, dy, h) : {
+        ...start,
+        x: limit(start.x + dx, 0, 5e4),
+        y: limit(start.y + dy, 0, 5e4)
+      },
+      commit: (p) => {
+        this.change({ ...this.value, ...p });
+        this.selection.position();
+      },
+      end: () => this.cancelGesture = null
+    });
+  }
+  key(e, h) {
+    if (e.target.closest("input,textarea,select")) return;
+    if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      e.stopPropagation();
+      this.remove();
+      return;
+    }
+    if (e.key === "Escape") {
+      this.selection.select(null);
+      return;
+    }
+    const d = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1]
+    };
+    if (!d[e.key]) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.select();
+    const [dx, dy] = d[e.key].map((n) => n * (e.shiftKey ? 10 : 1));
+    this.change({
+      ...this.value,
+      ...h ? rotatedResize(this.value, dx, dy, h) : {
+        x: limit(this.value.x + dx, 0, 5e4),
+        y: limit(this.value.y + dy, 0, 5e4)
+      }
+    });
+    this.selection.position();
+  }
+  destroy() {
+    this.cancelRotate();
+    if (this.editing && this.input && this.input.value !== this.value.text)
+      this.recover(this.input.value);
+    this.cancelGesture?.();
+    this.selection.remove(this);
+    this.root.remove();
+  }
+};
+
+// src/spatial.ts
 var action = import_state.StateEffect.define();
 var fields = /* @__PURE__ */ new WeakMap();
-var live = (state) => state.field(import_obsidian.editorLivePreviewField, false) === true;
-var pathOf = (state) => state.field(import_obsidian.editorInfoField, false)?.file?.path ?? "";
+var live = (state) => state.field(import_obsidian4.editorLivePreviewField, false) === true;
+var pathOf = (state) => state.field(import_obsidian4.editorInfoField, false)?.file?.path ?? "";
 var Hidden = class extends import_view.WidgetType {
   toDOM() {
     const el = document.createElement("span");
@@ -4372,8 +6174,23 @@ var Space = class extends import_view.WidgetType {
     return true;
   }
 };
+function reserve(value) {
+  return Math.ceil(
+    Math.max(
+      800,
+      ...value.pins.map((p) => {
+        const b = rotatedBounds(p);
+        return b.y + b.height + 160;
+      }),
+      ...value.drawings.map((d) => {
+        const b = rotatedBounds(d);
+        return b.y + b.height + 160;
+      })
+    ) / 512
+  ) * 512;
+}
 function decorate(value, length) {
-  if (!value.enabled || !value.live || !value.pins.length)
+  if (!value.enabled || !value.live || !value.pins.length && !value.drawings.length)
     return import_view.Decoration.none;
   const ranges = value.pins.map(
     (p) => import_view.Decoration.replace({ block: true, widget: new Hidden() }).range(
@@ -4381,12 +6198,12 @@ function decorate(value, length) {
       p.to
     )
   );
-  const reserve = Math.max(800, ...value.pins.map((p) => p.y + p.height + 120));
+  const height = reserve(value);
   ranges.push(
     import_view.Decoration.widget({
       block: true,
       side: 1,
-      widget: new Space(reserve)
+      widget: new Space(height)
     }).range(length)
   );
   return import_view.Decoration.set(ranges, true);
@@ -4401,6 +6218,7 @@ function createSpatialExtension(host) {
         path,
         enabled: saved?.enabled ?? true,
         live: live(state),
+        drawings: saved?.drawings ?? [],
         ...restored,
         decorations: import_view.Decoration.none
       };
@@ -4408,18 +6226,23 @@ function createSpatialExtension(host) {
       return value;
     },
     update(old, tr) {
+      const path = pathOf(tr.state);
+      const isLive = live(tr.state);
+      const effects = tr.effects.filter((e) => e.is(action));
+      if (!tr.docChanged && !effects.length && path === old.path && isLive === old.live)
+        return old;
       let value = {
         ...old,
         pins: old.pins,
         live: live(tr.state)
       };
-      const path = pathOf(tr.state);
       if (path !== old.path) {
         const saved = host.store.notes[path];
         value = {
           ...value,
           path,
           enabled: saved?.enabled ?? true,
+          drawings: saved?.drawings ?? [],
           ...restore(saved?.pins ?? [], tr.state.doc.toString())
         };
       } else if (tr.docChanged) {
@@ -4468,8 +6291,21 @@ function createSpatialExtension(host) {
             )
           };
         if (a.type === "toggle") value = { ...value, enabled: !value.enabled };
+        if (a.type === "drawings")
+          value = { ...value, drawings: a.drawings, enabled: true };
+        if (a.type === "reset")
+          value = {
+            ...value,
+            pins: [],
+            detached: [],
+            drawings: [],
+            enabled: true
+          };
       }
-      if (tr.docChanged || tr.effects.some((e) => e.is(action)) || path !== old.path || value.live !== old.live)
+      const sourceRangesChanged = tr.docChanged || path !== old.path || effects.some(
+        (e) => e.is(action) && ["add", "remove", "reset", "toggle"].includes(e.value.type)
+      );
+      if (sourceRangesChanged || value.live !== old.live || reserve(value) !== reserve(old) || !old.drawings.length !== !value.drawings.length)
         value.decorations = decorate(value, tr.state.doc.length);
       return value;
     },
@@ -4496,9 +6332,50 @@ function createSpatialExtension(host) {
         this.layer.className = "cv-spatial-layer";
         this.layer.contentEditable = "false";
         view.scrollDOM.append(this.layer);
+        this.selection = new Selection(view.scrollDOM);
+        this.tools = new DesignTools(
+          view,
+          this.layer,
+          this.selection,
+          host.app,
+          {
+            read: () => view.state.field(field),
+            getPreferences: () => normalizePreferences(host.store.settings),
+            openPreferences: () => host.openPreferences(),
+            toggle: () => view.dispatch({ effects: action.of({ type: "toggle" }) }),
+            importImage: (file, path) => host.importImage(file, path),
+            imageURL: (path) => host.imageURL(path),
+            notify: (message) => host.notify(message),
+            getDefaults: () => host.store.toolDefaults ?? {},
+            saveDefault: (mode, style) => {
+              host.store.toolDefaults = {
+                ...host.store.toolDefaults,
+                [mode]: style
+              };
+              host.scheduleSave();
+            },
+            recover: (path, text) => {
+              host.store.recoveryDrafts ??= [];
+              host.store.recoveryDrafts.push({
+                id: crypto.randomUUID(),
+                path,
+                text,
+                savedAt: (/* @__PURE__ */ new Date()).toISOString()
+              });
+              host.scheduleSave();
+              host.notify(
+                "An unfinished annotation draft was saved. Use Canvesidian: Recover interrupted block drafts."
+              );
+            },
+            setDrawings: (drawings) => view.dispatch({
+              effects: action.of({ type: "drawings", drawings })
+            }),
+            reset: () => view.dispatch({ effects: action.of({ type: "reset" }) })
+          }
+        );
         this.handle = document.createElement("button");
         this.handle.className = "cv-float-handle";
-        this.handle.textContent = "::";
+        (0, import_obsidian4.setIcon)(this.handle, "grip-vertical");
         this.handle.title = "Drag this block out of the text flow";
         this.handle.setAttribute("aria-label", "Float block under pointer");
         this.layer.append(this.handle);
@@ -4521,8 +6398,15 @@ function createSpatialExtension(host) {
       layer;
       handle;
       cards = /* @__PURE__ */ new Map();
+      selection;
+      tools;
+      cachedDoc = null;
+      cachedSource = "";
+      savedPins = /* @__PURE__ */ new Map();
       hoverPos = null;
       destroyed = false;
+      hoverFrame = 0;
+      hoverEvent = null;
       parsedDoc = null;
       parsedBlocks = [];
       update(update) {
@@ -4530,7 +6414,7 @@ function createSpatialExtension(host) {
         const next = update.state.field(field);
         if (before !== next) {
           this.sync(false);
-          if (update.docChanged || before.pins !== next.pins || before.enabled !== next.enabled || before.path !== next.path)
+          if (update.docChanged || before.pins !== next.pins || before.drawings !== next.drawings || before.enabled !== next.enabled || before.path !== next.path)
             this.persist();
         }
         if (update.docChanged || update.viewportChanged)
@@ -4554,12 +6438,16 @@ function createSpatialExtension(host) {
                 host,
                 pin,
                 this.layer,
-                () => this.persist()
+                () => this.persist(),
+                this.selection
               );
               this.cards.set(pin.id, card);
+              this.selection.select(card);
             }
-            card.update(pin);
+            if (card.pin !== pin || !card.root.style.width) card.update(pin);
           }
+        this.tools.sync();
+        this.selection.position();
         if (initial && state.detached.length)
           host.notify(
             `${state.detached.length} Canvesidian placement(s) could not be matched safely. Their text remains visible; saved placement has been retained.`
@@ -4568,19 +6456,32 @@ function createSpatialExtension(host) {
       persist() {
         const state = this.view.state.field(field);
         if (!state.path) return;
-        const source = this.view.state.doc.toString();
+        const changed = this.cachedDoc !== this.view.state.doc;
+        if (changed) {
+          this.cachedDoc = this.view.state.doc;
+          this.cachedSource = this.view.state.doc.toString();
+          this.savedPins.clear();
+        }
+        const currentIds = new Set(state.pins.map((p) => p.id));
+        for (const id of this.savedPins.keys())
+          if (!currentIds.has(id)) this.savedPins.delete(id);
+        const saved = state.pins.map((p) => {
+          const previous = this.savedPins.get(p.id);
+          const value = previous ? { ...previous, ...p } : capture(p, this.cachedSource);
+          this.savedPins.set(p.id, value);
+          return value;
+        });
         host.store.notes[state.path] = {
           enabled: state.enabled,
-          pins: [
-            ...state.pins.map((p) => capture(p, source)),
-            ...state.detached
-          ]
+          pins: [...saved, ...state.detached],
+          drawings: state.drawings
         };
         host.scheduleSave();
       }
       hover(event) {
         const state = this.view.state.field(field);
-        if (!state.enabled || !state.live) return;
+        if (!state.enabled || !state.live || this.view.scrollDOM.classList.contains("cv-has-gesture"))
+          return;
         if (!(event.target instanceof HTMLElement) || !event.target.closest(".cm-content") || event.target.closest(".cv-spatial-layer"))
           return;
         const pos = this.view.posAtCoords({
@@ -4603,18 +6504,47 @@ function createSpatialExtension(host) {
         if (!coords) return;
         const rect = this.view.scrollDOM.getBoundingClientRect();
         this.hoverPos = pos;
+        let bounds = {
+          left: coords.left,
+          top: coords.top,
+          height: coords.bottom - coords.top
+        };
+        try {
+          const lineEnd2 = Math.min(
+            block.to,
+            this.view.state.doc.lineAt(block.from).to
+          );
+          const start = this.view.domAtPos(block.from), end = this.view.domAtPos(lineEnd2);
+          const range = document.createRange();
+          range.setStart(start.node, start.offset);
+          range.setEnd(end.node, end.offset);
+          const r = range.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) bounds = r;
+        } catch {
+        }
+        const size = matchMedia("(pointer:coarse)").matches ? 44 : 28;
         this.handle.style.left = Math.max(
-          4,
-          coords.left - rect.left + this.view.scrollDOM.scrollLeft - 36
+          0,
+          bounds.left - rect.left + this.view.scrollDOM.scrollLeft - size - 8
         ) + "px";
-        this.handle.style.top = coords.top - rect.top + this.view.scrollDOM.scrollTop + "px";
+        this.handle.style.top = bounds.top - rect.top + this.view.scrollDOM.scrollTop + (bounds.height - size) / 2 + "px";
         this.handle.hidden = false;
       }
+      queueHover(event) {
+        this.hoverEvent = event;
+        if (!this.hoverFrame)
+          this.hoverFrame = requestAnimationFrame(() => {
+            this.hoverFrame = 0;
+            if (this.hoverEvent && !this.destroyed) this.hover(this.hoverEvent);
+          });
+      }
       destroy() {
+        cancelAnimationFrame(this.hoverFrame);
         this.destroyed = true;
         this.persist();
         this.cards.forEach((c) => c.destroy());
         this.cards.clear();
+        this.tools.destroy();
         this.layer.remove();
         this.view.scrollDOM.classList.remove("cv-spatial-scroller");
         host.views.delete(this.view);
@@ -4624,12 +6554,20 @@ function createSpatialExtension(host) {
     {
       eventHandlers: {
         mousemove(event) {
-          this.hover(event);
+          this.queueHover(event);
         }
       }
     }
   );
-  return [import_state.Prec.high(field), plugin];
+  return [
+    import_view.EditorView.editorAttributes.of({ class: "cv-design-editor" }),
+    import_state.Prec.high(field),
+    plugin
+  ];
+}
+function refreshSpatial(view) {
+  if (fields.has(view))
+    view.dispatch({ effects: action.of({ type: "refresh" }) });
 }
 function toggleSpatial(view) {
   if (fields.has(view))
@@ -4683,60 +6621,138 @@ function floatAt(view, host, pos) {
   };
   for (let pass = 0; pass < state.pins.length + 1; pass++) {
     const overlap = state.pins.find(
-      (p) => pin.x < p.x + p.width + 16 && pin.x + pin.width + 16 > p.x && pin.y < p.y + p.height + 24 && pin.y + pin.height + 24 > p.y
+      (p) => pin.x < p.x + p.width + 16 && pin.x + pin.width + 16 > p.x && pin.y < p.y + p.height + 72 && pin.y + pin.height + 72 > p.y
     );
     if (!overlap) break;
-    pin.y = limit(overlap.y + overlap.height + 24, 8, 5e4);
+    pin.y = limit(overlap.y + overlap.height + 72, 8, 5e4);
   }
   view.dispatch({ effects: action.of({ type: "add", pin }) });
   return pin;
 }
 var FloatingBlock = class {
-  constructor(view, host, pin, parent, persist) {
+  constructor(view, host, pin, parent, persist, selection) {
     this.view = view;
     this.host = host;
     this.persist = persist;
+    this.selection = selection;
     this.pin = pin;
+    this.id = pin.id;
     this.path = this.view.state.field(fields.get(this.view)).path;
     this.root = document.createElement("article");
     this.root.className = "cv-floating-block";
     this.root.setAttribute("aria-label", "Floating block in this note");
     this.root.contentEditable = "false";
+    this.root.tabIndex = 0;
+    this.root.onfocus = () => this.selection.select(this);
+    this.root.addEventListener("focusin", () => this.selection.select(this));
     parent.append(this.root);
     const toolbar = document.createElement("div");
-    toolbar.className = "cv-floating-toolbar";
+    this.toolbar = toolbar;
+    toolbar.className = "cv-context-toolbar";
+    toolbar.setAttribute("role", "toolbar");
+    toolbar.setAttribute("aria-label", "Selected text tools");
     this.root.append(toolbar);
-    this.grip = this.button(toolbar, "::", "Move this block", () => {
-    });
-    this.grip.className = "cv-block-grip";
+    this.grip = iconButton(
+      toolbar,
+      "move",
+      "Move this block",
+      () => this.select()
+    );
+    this.grip.classList.add("cv-block-grip");
     this.grip.onpointerdown = (e) => this.beginDrag(e);
     this.grip.onkeydown = (e) => this.nudge(e, false);
-    this.button(toolbar, "Edit", "Edit text in place", () => this.edit());
-    this.button(toolbar, "Return", "Return block to normal text flow", () => {
-      const from = this.pin.from;
-      this.dispatch({ type: "remove", id: this.pin.id });
-      this.view.dispatch({
-        selection: { anchor: Math.min(from, this.view.state.doc.length) },
-        scrollIntoView: true
-      });
-      this.view.focus();
-    });
+    this.editButton = iconButton(
+      toolbar,
+      "pencil",
+      "Edit text in place",
+      () => {
+        this.select();
+        if (this.textarea) {
+          if (this.commitDraft?.()) this.finishEdit();
+        } else this.edit();
+      }
+    );
+    iconButton(
+      toolbar,
+      "corner-up-left",
+      "Return block to normal text flow",
+      () => {
+        const from = this.pin.from;
+        this.dispatch({ type: "remove", id: this.pin.id });
+        this.view.dispatch({
+          selection: { anchor: Math.min(from, this.view.state.doc.length) },
+          scrollIntoView: true
+        });
+        this.view.focus();
+      }
+    );
+    const del = iconButton(
+      toolbar,
+      "trash-2",
+      "Delete this block from note",
+      () => this.remove()
+    );
+    del.classList.add("cv-danger");
+    iconButton(
+      toolbar,
+      "settings-2",
+      "Text block settings",
+      () => this.openSettings()
+    );
+    this.frame = document.createElement("div");
+    this.frame.className = "cv-rotated-frame cv-text-frame";
+    this.root.append(this.frame);
     this.body = document.createElement("div");
     this.body.className = "cv-floating-body markdown-rendered";
     this.body.dir = "auto";
     this.body.ondblclick = () => this.edit();
-    this.root.append(this.body);
-    this.resize = this.button(this.root, "\u2194", "Resize block", () => {
-    });
-    this.resize.className = "cv-block-resize";
-    this.resize.onpointerdown = (e) => this.drag(e, true);
-    this.resize.onkeydown = (e) => this.nudge(e, true);
+    this.frame.append(this.body);
+    addHandles(
+      this.frame,
+      (e, h) => this.drag(e, h),
+      (e) => this.nudge(e, true)
+    );
+    this.updateGrip = leftGrip(
+      this.root,
+      () => this.pin,
+      (e) => this.beginDrag(e),
+      (e) => this.nudge(e, false)
+    );
+    this.cancelRotate = rotationHandle(
+      this.root,
+      this.frame,
+      () => this.pin,
+      (n) => {
+        this.dispatch({
+          type: "place",
+          id: this.pin.id,
+          placement: { rotation: n }
+        });
+        this.selection.position();
+      }
+    );
+    this.resize = this.root.querySelector(".cv-handle-se");
+    this.root.onpointerdown = (e) => {
+      if (e.target.closest("button,textarea,input,a")) return;
+      this.beginDrag(e);
+    };
+    this.root.onkeydown = (e) => {
+      if (e.target.closest("textarea,input,button")) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        this.remove();
+      } else if (e.key === "Escape") this.selection.select(null);
+      else this.nudge(e, false);
+    };
     this.root.addEventListener("keydown", (e) => e.stopPropagation());
     this.root.addEventListener("pointerdown", (e) => e.stopPropagation());
     this.root.addEventListener("mousedown", (e) => e.stopPropagation());
     this.root.addEventListener("input", (e) => e.stopPropagation());
-    this.observer = new ResizeObserver(() => {
-      const height = Math.ceil(this.root.getBoundingClientRect().height);
+    this.observer = new ResizeObserver((entries) => {
+      if (this.dragging) return;
+      const height = Math.ceil(
+        entries[0].borderBoxSize?.[0]?.blockSize ?? entries[0].contentRect.height
+      );
       if (Math.abs(height - this.pin.height) > 2 && height > 0) {
         cancelAnimationFrame(this.sizeFrame);
         this.sizeFrame = requestAnimationFrame(() => {
@@ -4751,6 +6767,14 @@ var FloatingBlock = class {
     });
     this.observer.observe(this.root);
   }
+  id;
+  toolbar;
+  editButton;
+  frame;
+  updateGrip;
+  cancelRotate;
+  commitDraft = null;
+  dragging = false;
   root;
   body;
   grip;
@@ -4767,25 +6791,17 @@ var FloatingBlock = class {
   cleanupDrag = null;
   observer;
   sizeFrame = 0;
-  button(parent, text, label, fn) {
-    const button = document.createElement("button");
-    button.textContent = text;
-    button.type = "button";
-    button.title = label;
-    button.setAttribute("aria-label", label);
-    button.onclick = fn;
-    parent.append(button);
-    return button;
-  }
   dispatch(a) {
     this.view.dispatch({ effects: action.of(a) });
   }
   update(pin) {
     this.pin = pin;
+    this.frame.style.rotate = (pin.rotation ?? 0) + "deg";
+    this.updateGrip();
     this.root.style.left = pin.x + "px";
     this.root.style.top = pin.y + "px";
     this.root.style.width = pin.width + "px";
-    const source = this.view.state.doc.sliceString(pin.from, pin.to);
+    const source = pin.text;
     if (this.textarea) {
       if (source !== this.draftBase) {
         if (this.textarea.value === this.draftBase || this.textarea.value === source) {
@@ -4804,7 +6820,7 @@ var FloatingBlock = class {
           );
         }
       }
-      this.sizeInput();
+      if (source !== this.draftBase) this.sizeInput();
       return;
     }
     if (this.lastText !== source) {
@@ -4815,12 +6831,12 @@ var FloatingBlock = class {
   async render(text) {
     const generation = ++this.generation;
     this.life?.unload();
-    this.life = new import_obsidian.Component();
+    this.life = new import_obsidian4.Component();
     this.life.load();
     const staging = document.createElement("div");
     this.body.replaceChildren(staging);
     try {
-      await import_obsidian.MarkdownRenderer.render(
+      await import_obsidian4.MarkdownRenderer.render(
         this.host.app,
         text,
         staging,
@@ -4833,7 +6849,62 @@ var FloatingBlock = class {
       console.error("Canvesidian block renderer", e);
     }
   }
+  position = () => this.pin;
+  bounds = () => rotatedBounds(this.pin);
+  openSettings = () => {
+    this.selection.select(this);
+    this.toolbar.querySelector(".cv-property-popover")?.remove();
+    const menu = document.createElement("div");
+    menu.className = "cv-property-popover cv-text-properties";
+    this.toolbar.append(menu);
+    const label = document.createElement("label");
+    label.textContent = "Width";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "200";
+    input.max = "1200";
+    input.value = String(Math.round(this.pin.width));
+    input.setAttribute("aria-label", "Text block width");
+    input.onchange = () => this.dispatch({
+      type: "place",
+      id: this.pin.id,
+      placement: { width: limit(Number(input.value) || 200, 200, 1200) }
+    });
+    label.append(input);
+    menu.append(label);
+    rotationField(menu, this.pin.rotation ?? 0, (n) => {
+      this.dispatch({
+        type: "place",
+        id: this.pin.id,
+        placement: { rotation: n }
+      });
+      this.selection.position();
+    });
+    this.selection.position();
+  };
+  select() {
+    this.selection.select(this);
+    this.root.focus({ preventScroll: true });
+  }
+  remove = () => {
+    confirmAction(
+      this.host.app,
+      "Delete this block?",
+      "This removes the block\u2019s Markdown from this note. Text undo can restore it. Returning a block to normal flow is a separate action.",
+      "Delete block",
+      () => {
+        if (!this.root.isConnected) return;
+        this.view.dispatch({
+          changes: { from: this.pin.from, to: this.pin.to, insert: "" },
+          effects: action.of({ type: "remove", id: this.pin.id }),
+          annotations: import_state.Transaction.userEvent.of("delete.selection")
+        });
+        this.view.focus();
+      }
+    );
+  };
   edit() {
+    this.selection.select(this);
     if (this.textarea) {
       this.textarea.focus();
       return;
@@ -4899,15 +6970,10 @@ var FloatingBlock = class {
         if (commit()) this.finishEdit();
       }
     };
-    const done = this.button(
-      this.body,
-      "Done",
-      "Finish editing this block",
-      () => {
-        if (commit()) this.finishEdit();
-      }
-    );
-    done.className = "cv-done";
+    this.commitDraft = commit;
+    (0, import_obsidian4.setIcon)(this.editButton, "check");
+    this.editButton.setAttribute("aria-label", "Finish editing this block");
+    this.editButton.title = "Finish editing this block";
     this.sizeInput();
     input.focus();
   }
@@ -4928,6 +6994,10 @@ var FloatingBlock = class {
   }
   finishEdit() {
     this.composing = false;
+    this.commitDraft = null;
+    (0, import_obsidian4.setIcon)(this.editButton, "pencil");
+    this.editButton.setAttribute("aria-label", "Edit text in place");
+    this.editButton.title = "Edit text in place";
     this.textarea = null;
     this.body.replaceChildren();
     this.lastText = null;
@@ -4935,6 +7005,7 @@ var FloatingBlock = class {
     this.grip.focus({ preventScroll: true });
   }
   beginDrag(event, alignToPointer = false) {
+    this.select();
     if (alignToPointer) {
       const rect = this.view.scrollDOM.getBoundingClientRect();
       this.dispatch({
@@ -4954,7 +7025,7 @@ var FloatingBlock = class {
         }
       });
     }
-    this.drag(event, false);
+    this.drag(event);
   }
   nudge(e, resize) {
     const d = {
@@ -4975,54 +7046,53 @@ var FloatingBlock = class {
       }
     });
   }
-  drag(e, resize) {
+  drag(e, handle) {
     if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
+    this.select();
     this.cleanupDrag?.();
-    const start = {
-      x: e.clientX,
-      y: e.clientY,
-      left: this.pin.x,
-      top: this.pin.y,
-      width: this.pin.width,
-      sx: this.view.scrollDOM.scrollLeft,
-      sy: this.view.scrollDOM.scrollTop
-    };
-    const move = (event) => {
-      if (event.pointerId !== e.pointerId) return;
-      const dx = event.clientX - start.x + this.view.scrollDOM.scrollLeft - start.sx;
-      const dy = event.clientY - start.y + this.view.scrollDOM.scrollTop - start.sy;
-      this.dispatch({
-        type: "place",
-        id: this.pin.id,
-        placement: resize ? { width: limit(start.width + dx, 200, 1200) } : {
-          x: limit(start.left + dx, 0, 5e4),
-          y: limit(start.top + dy, 0, 5e4)
-        }
-      });
-    };
-    const end = (event) => {
-      if (event && event.pointerId !== e.pointerId) return;
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-      window.removeEventListener("blur", blur);
-      this.cleanupDrag = null;
-      this.persist();
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
-    const blur = () => end();
-    window.addEventListener("blur", blur, { once: true });
-    this.cleanupDrag = () => {
-      window.removeEventListener("blur", blur);
-      end();
-    };
-    this.grip.focus({ preventScroll: true });
+    this.dragging = true;
+    const start = { ...this.pin };
+    this.cleanupDrag = previewGesture(e, {
+      scroller: this.view.scrollDOM,
+      root: this.root,
+      start,
+      project: (dx, dy) => {
+        if (!handle)
+          return {
+            ...start,
+            x: limit(start.x + dx, 0, 5e4),
+            y: limit(start.y + dy, 0, 5e4)
+          };
+        const horizontal = handle.includes("w") ? "w" : "e";
+        const next = rotatedResize(start, dx, dy, horizontal, 200, 24);
+        return {
+          ...next,
+          y: start.rotation ? next.y : start.y,
+          height: start.height
+        };
+      },
+      commit: (p) => {
+        this.dispatch({
+          type: "place",
+          id: this.pin.id,
+          placement: {
+            x: p.x,
+            y: p.y,
+            width: p.width,
+            rotation: p.rotation,
+            height: Math.ceil(this.root.offsetHeight)
+          }
+        });
+        this.selection.position();
+      },
+      end: () => {
+        this.dragging = false;
+        this.cleanupDrag = null;
+      }
+    });
   }
   destroy() {
+    this.cancelRotate();
     if (this.textarea && this.textarea.value !== this.draftBase) {
       const path = this.path;
       const drafts = this.host.store.recoveryDrafts ??= [];
@@ -5045,13 +7115,106 @@ var FloatingBlock = class {
     this.cleanupDrag?.();
     this.observer.disconnect();
     this.life?.unload();
+    this.selection.remove(this);
     this.root.remove();
   }
 };
 
+// src/plugin-settings.ts
+var import_obsidian5 = require("obsidian");
+function preferenceControls(container, host) {
+  const prefs = () => normalizePreferences(host.store.settings);
+  const set = (patch) => {
+    host.store.settings = { ...prefs(), ...patch };
+    host.scheduleSave();
+    host.refreshDesign();
+  };
+  new import_obsidian5.Setting(container).setName("Dotted note background").setDesc(
+    "Show the grid only while spatial effects are enabled. Your Markdown is unchanged."
+  ).addToggle(
+    (c) => c.setValue(prefs().dotGrid).onChange((v) => set({ dotGrid: v }))
+  );
+  new import_obsidian5.Setting(container).setName("Dot spacing").addSlider(
+    (c) => c.setLimits(12, 64, 4).setValue(prefs().gridSpacing).setDynamicTooltip().onChange((v) => set({ gridSpacing: v }))
+  );
+  new import_obsidian5.Setting(container).setName("Dot opacity").addSlider(
+    (c) => c.setLimits(5, 40, 5).setValue(prefs().gridOpacity * 100).setDynamicTooltip().onChange((v) => set({ gridOpacity: v / 100 }))
+  );
+  const p = document.createElement("p");
+  p.className = "cv-settings-note";
+  p.textContent = "Effects visibility is per note and non-destructive. Reset is separate and asks for confirmation. Images are copied into the vault; deleting their annotation does not delete the image file.";
+  container.append(p);
+}
+var CanvesidianSettings = class extends import_obsidian5.PluginSettingTab {
+  constructor(app, plugin, host) {
+    super(app, plugin);
+    this.host = host;
+  }
+  display() {
+    this.containerEl.replaceChildren();
+    preferenceControls(this.containerEl, this.host);
+  }
+};
+function openPreferences(app, host) {
+  class Preferences extends import_obsidian5.Modal {
+    onOpen() {
+      this.titleEl.textContent = "Canvesidian settings";
+      preferenceControls(this.contentEl, host);
+    }
+    onClose() {
+      this.contentEl.replaceChildren();
+    }
+  }
+  new Preferences(app).open();
+}
+
+// src/assets.ts
+var import_obsidian6 = require("obsidian");
+
+// src/raster.ts
+function rasterExtension(bytes) {
+  if (bytes.length > 20 * 1024 * 1024)
+    throw Error("Images must be at most 20 MB.");
+  if (bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71)
+    return "png";
+  if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "jpg";
+  const text = new TextDecoder("ascii").decode(bytes.slice(0, 16));
+  if (text.startsWith("GIF87a") || text.startsWith("GIF89a")) return "gif";
+  if (text.startsWith("RIFF") && text.slice(8, 12) === "WEBP") return "webp";
+  throw Error(
+    "Choose a PNG, JPEG, GIF or WebP image. SVG and other files are not imported."
+  );
+}
+
+// src/assets.ts
+async function importRaster(app, file, sourcePath) {
+  if (file.size > 20 * 1024 * 1024)
+    throw Error("Images must be at most 20 MB.");
+  const bytes = await file.arrayBuffer();
+  const extension = rasterExtension(new Uint8Array(bytes));
+  const bitmap = await createImageBitmap(new Blob([bytes]));
+  const ratio = bitmap.width / bitmap.height;
+  bitmap.close();
+  const base = file.name.replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}_ -]/gu, "").slice(0, 64) || "image";
+  const assetPath = await app.fileManager.getAvailablePathForAttachment(
+    base + "." + extension,
+    sourcePath
+  );
+  await app.vault.createBinary(assetPath, bytes);
+  return {
+    assetPath,
+    width: 320,
+    height: Math.max(24, Math.min(1200, 320 / ratio))
+  };
+}
+function imageURL(app, path) {
+  const file = app.vault.getAbstractFileByPath(path);
+  return file instanceof import_obsidian6.TFile ? app.vault.getResourcePath(file) : "";
+}
+
 // src/main.ts
-var Canvesidian = class extends import_obsidian2.Plugin {
-  store = { version: 2, notes: {} };
+var Canvesidian = class extends import_obsidian7.Plugin {
+  store = { version: 5, notes: {} };
   views = /* @__PURE__ */ new Set();
   dataReady = false;
   timer;
@@ -5060,16 +7223,17 @@ var Canvesidian = class extends import_obsidian2.Plugin {
     try {
       this.store = normalize(await this.loadData());
     } catch (e) {
-      new import_obsidian2.Notice(String(e));
+      new import_obsidian7.Notice(String(e));
       return;
     }
     this.dataReady = true;
+    this.addSettingTab(new CanvesidianSettings(this.app, this, this));
     this.registerEditorExtension(createSpatialExtension(this));
     this.addCommand({
       id: "recover-interrupted-drafts",
       name: "Recover interrupted block drafts",
       callback: () => {
-        const modal = new import_obsidian2.Modal(this.app);
+        const modal = new import_obsidian7.Modal(this.app);
         modal.titleEl.setText("Interrupted block drafts");
         const drafts = this.store.recoveryDrafts ?? [];
         if (!drafts.length)
@@ -5130,9 +7294,21 @@ var Canvesidian = class extends import_obsidian2.Plugin {
       })
     );
   }
+  refreshDesign() {
+    for (const view of this.views) refreshSpatial(view);
+  }
+  openPreferences() {
+    openPreferences(this.app, this);
+  }
+  importImage(file, path) {
+    return importRaster(this.app, file, path);
+  }
+  imageURL(path) {
+    return imageURL(this.app, path);
+  }
   findView(editor, _info) {
     return [...this.views].find(
-      (v) => v.state.field(import_obsidian2.editorInfoField, false)?.editor === editor
+      (v) => v.state.field(import_obsidian7.editorInfoField, false)?.editor === editor
     );
   }
   scheduleSave() {
@@ -5152,7 +7328,7 @@ var Canvesidian = class extends import_obsidian2.Plugin {
       await this.writes;
     } catch (e) {
       console.error(e);
-      new import_obsidian2.Notice("Canvesidian could not save placement. Check vault storage.");
+      new import_obsidian7.Notice("Canvesidian could not save placement. Check vault storage.");
     }
   }
   onunload() {
@@ -5160,6 +7336,6 @@ var Canvesidian = class extends import_obsidian2.Plugin {
     void this.flush();
   }
   notify(message) {
-    new import_obsidian2.Notice(message);
+    new import_obsidian7.Notice(message);
   }
 };

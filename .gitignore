@@ -5,3 +5,4 @@ data.json
 qa/harness.html
 qa/harness.js
 qa/*.png
+qa/performance-result.json

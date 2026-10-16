@@ -12,6 +12,7 @@ import {
   editorInfoField,
   editorLivePreviewField,
   changeMode,
+  TFile,
 } from "./obsidian-mock";
 import { normalize } from "../src/model";
 import { floatAt, toggleSpatial } from "../src/spatial";
@@ -28,7 +29,26 @@ plugin.app = {
       w.leafCreates++;
     },
   },
-  vault: { on: () => {} },
+  fileManager: {
+    getAvailablePathForAttachment: async (name: string) =>
+      "attachments/" + crypto.randomUUID() + "-" + name,
+  },
+  vault: {
+    on: () => {},
+    createBinary: async (path: string, data: ArrayBuffer) => {
+      w.fileWrites++;
+      w.assets ??= {};
+      const file = new TFile() as any;
+      file.path = path;
+      w.assets[path] = { file, data: Array.from(new Uint8Array(data)) };
+      return file;
+    },
+    getAbstractFileByPath: (path: string) => w.assets?.[path]?.file ?? null,
+    getResourcePath: (file: any) => {
+      const data = w.assets[file.path].data;
+      return "data:image/png;base64," + btoa(String.fromCharCode(...data));
+    },
+  },
 };
 w.plugin = plugin;
 await plugin.onload();
@@ -46,6 +66,10 @@ function mount(doc = original) {
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
       w.extension,
+      EditorView.updateListener.of((update) => {
+        w.transactionCount =
+          (w.transactionCount ?? 0) + update.transactions.length;
+      }),
     ],
   });
   const view = new EditorView({ state, parent });

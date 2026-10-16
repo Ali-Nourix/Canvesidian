@@ -160,6 +160,11 @@ try {
   console.log("PASS: an existing image Markdown block floats independently");
   const texts = await page.evaluate(() => window.source());
   await page
+    .locator(".cv-floating-block")
+    .first()
+    .locator(".cv-floating-body")
+    .click();
+  await page
     .getByRole("button", {
       name: "Return block to normal text flow",
       exact: true,
@@ -324,6 +329,9 @@ try {
   // A clean, non-overlapping example for visual QA (not a claim of real Obsidian rendering).
   await page.evaluate(() => window.floatText("const idea"));
   const moveCard = async (card, x, y) => {
+    await card
+      .locator(".cv-floating-body")
+      .click({ position: { x: 24, y: 12 } });
     const box = await card.boundingBox();
     const g = await card
       .getByRole("button", { name: "Move this block", exact: true })
