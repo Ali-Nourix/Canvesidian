@@ -99,7 +99,7 @@ test("corrupt optional point fields cannot crash shape restoration", () => {
   assert.equal(normalizeDrawings([{ ...d, points: "invalid" }]).length, 1);
 });
 
-test("v3 layouts migrate to v4 with drawings and placements intact", () => {
+test("v3 layouts migrate to v5 with drawings and placements intact", () => {
   const d = drawingFromPoints("rect", [
     [0, 0],
     [100, 80],
@@ -108,7 +108,7 @@ test("v3 layouts migrate to v4 with drawings and placements intact", () => {
     version: 3,
     notes: { a: { pins: [], drawings: [d] } },
   });
-  assert.equal(data.version, 4);
+  assert.equal(data.version, 5);
   assert.equal(data.notes.a.drawings![0].id, d.id);
 });
 test("annotations round trip multilingual text, paper, font and sticker ID", () => {

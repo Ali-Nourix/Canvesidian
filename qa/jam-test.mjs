@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { clickTool, toolGroup } from "./tool-helpers.mjs";
 import assert from "node:assert/strict";
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH,
@@ -19,7 +20,10 @@ try {
   await page.goto(new URL("./harness.html", import.meta.url).href);
   await page.waitForFunction(() => window.ready);
   const source = await page.evaluate(() => window.source());
-  const button = (name) => page.getByRole("button", { name, exact: true });
+  const button = (name) =>
+    toolGroup(name)
+      ? { click: () => clickTool(page, name) }
+      : page.getByRole("button", { name, exact: true });
   const tool = async (name) => {
     await button(name).click();
     if (await page.locator(".cv-tool-tray").isVisible())
@@ -254,11 +258,11 @@ try {
   phone.on("pageerror", (e) => errors.push(String(e)));
   await phone.goto(new URL("./harness.html", import.meta.url).href);
   await phone.waitForFunction(() => window.ready);
-  await phone.getByRole("button", { name: "Add sticker", exact: true }).click();
+  await clickTool(phone, "Add sticker");
   await phone.screenshot({ path: "qa/jam-mobile-tray.png" });
   const tr = await phone.locator(".cv-tool-tray").boundingBox();
   assert.ok(tr.x >= 0 && tr.x + tr.width <= 390 && tr.y >= 52);
-  await phone.getByRole("button", { name: "Add sticker", exact: true }).click();
+  await clickTool(phone, "Add sticker");
   await phone.mouse.click(170, 550);
   await phone.screenshot({ path: "qa/jam-mobile.png" });
   assert.equal(

@@ -32,6 +32,10 @@ import {
   capture,
   restore,
   limit,
+  rotatedBounds,
+  rotatedResize,
+  normalizePreferences,
+  PluginPreferences,
 } from "./model";
 
 import {
@@ -42,6 +46,9 @@ import {
   Handle,
   resized,
   previewGesture,
+  leftGrip,
+  rotationField,
+  rotationHandle,
 } from "./interaction";
 import { DesignTools, confirmAction } from "./design-tools";
 
@@ -51,6 +58,12 @@ export interface SpatialHost {
   views: Set<EditorView>;
   scheduleSave(): void;
   notify(message: string): void;
+  openPreferences(): void;
+  importImage(
+    file: File,
+    path: string,
+  ): Promise<{ assetPath: string; width: number; height: number }>;
+  imageURL(path: string): string;
 }
 interface SpatialState {
   path: string;
@@ -62,12 +75,15 @@ interface SpatialState {
   decorations: DecorationSet;
 }
 type Action =
+  | { type: "refresh" }
   | { type: "add"; pin: Pin }
   | { type: "remove"; id: string }
   | {
       type: "place";
       id: string;
-      placement: Partial<Pick<Pin, "x" | "y" | "width" | "height">>;
+      placement: Partial<
+        Pick<Pin, "x" | "y" | "width" | "height" | "rotation">
+      >;
     }
   | { type: "toggle" }
   | { type: "drawings"; drawings: Drawing[] }
@@ -119,8 +135,14 @@ function reserve(value: SpatialState) {
     Math.ceil(
       Math.max(
         800,
-        ...value.pins.map((p) => p.y + p.height + 120),
-        ...value.drawings.map((d) => d.y + d.height + 120),
+        ...value.pins.map((p) => {
+          const b = rotatedBounds(p);
+          return b.y + b.height + 160;
+        }),
+        ...value.drawings.map((d) => {
+          const b = rotatedBounds(d);
+          return b.y + b.height + 160;
+        }),
       ) / 512,
     ) * 512
   );
@@ -311,6 +333,13 @@ export function createSpatialExtension(host: SpatialHost): Extension {
           host.app,
           {
             read: () => view.state.field(field),
+            getPreferences: () => normalizePreferences(host.store.settings),
+            openPreferences: () => host.openPreferences(),
+            toggle: () =>
+              view.dispatch({ effects: action.of({ type: "toggle" }) }),
+            importImage: (file, path) => host.importImage(file, path),
+            imageURL: (path) => host.imageURL(path),
+            notify: (message) => host.notify(message),
             getDefaults: () => host.store.toolDefaults ?? {},
             saveDefault: (mode, style) => {
               host.store.toolDefaults = {
@@ -476,13 +505,37 @@ export function createSpatialExtension(host: SpatialHost): Extension {
         if (!coords) return;
         const rect = this.view.scrollDOM.getBoundingClientRect();
         this.hoverPos = pos;
+        let bounds = {
+          left: coords.left,
+          top: coords.top,
+          height: coords.bottom - coords.top,
+        };
+        // A DOM range follows real rendered glyphs, including RTL headings and images.
+        try {
+          const lineEnd = Math.min(
+            block.to,
+            this.view.state.doc.lineAt(block.from).to,
+          );
+          const start = this.view.domAtPos(block.from),
+            end = this.view.domAtPos(lineEnd);
+          const range = document.createRange();
+          range.setStart(start.node, start.offset);
+          range.setEnd(end.node, end.offset);
+          const r = range.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) bounds = r;
+        } catch {}
+        const size = matchMedia("(pointer:coarse)").matches ? 44 : 28;
         this.handle.style.left =
           Math.max(
-            4,
-            coords.left - rect.left + this.view.scrollDOM.scrollLeft - 36,
+            0,
+            bounds.left - rect.left + this.view.scrollDOM.scrollLeft - size - 8,
           ) + "px";
         this.handle.style.top =
-          coords.top - rect.top + this.view.scrollDOM.scrollTop + "px";
+          bounds.top -
+          rect.top +
+          this.view.scrollDOM.scrollTop +
+          (bounds.height - size) / 2 +
+          "px";
         this.handle.hidden = false;
       }
       queueHover(event: MouseEvent) {
@@ -519,6 +572,10 @@ export function createSpatialExtension(host: SpatialHost): Extension {
     Prec.high(field),
     plugin,
   ];
+}
+export function refreshSpatial(view: EditorView) {
+  if (fields.has(view))
+    view.dispatch({ effects: action.of({ type: "refresh" }) });
 }
 export function toggleSpatial(view: EditorView) {
   if (fields.has(view))
@@ -602,6 +659,9 @@ class FloatingBlock implements Selectable {
   id: string;
   toolbar: HTMLElement;
   private editButton: HTMLButtonElement;
+  private frame: HTMLElement;
+  private updateGrip: () => void;
+  private cancelRotate: () => void;
   private commitDraft: (() => boolean) | null = null;
   private dragging = false;
   root: HTMLElement;
@@ -683,15 +743,40 @@ class FloatingBlock implements Selectable {
       () => this.remove(),
     );
     del.classList.add("cv-danger");
+    iconButton(toolbar, "settings-2", "Text block settings", () =>
+      this.openSettings(),
+    );
+    this.frame = document.createElement("div");
+    this.frame.className = "cv-rotated-frame cv-text-frame";
+    this.root.append(this.frame);
     this.body = document.createElement("div");
     this.body.className = "cv-floating-body markdown-rendered";
     this.body.dir = "auto";
     this.body.ondblclick = () => this.edit();
-    this.root.append(this.body);
+    this.frame.append(this.body);
     addHandles(
-      this.root,
+      this.frame,
       (e, h) => this.drag(e, h),
       (e) => this.nudge(e, true),
+    );
+    this.updateGrip = leftGrip(
+      this.root,
+      () => this.pin,
+      (e) => this.beginDrag(e),
+      (e) => this.nudge(e, false),
+    );
+    this.cancelRotate = rotationHandle(
+      this.root,
+      this.frame,
+      () => this.pin,
+      (n) => {
+        this.dispatch({
+          type: "place",
+          id: this.pin.id,
+          placement: { rotation: n },
+        });
+        this.selection.position();
+      },
     );
     this.resize = this.root.querySelector(".cv-handle-se") as HTMLButtonElement;
     this.root.onpointerdown = (e) => {
@@ -735,6 +820,8 @@ class FloatingBlock implements Selectable {
   }
   update(pin: Pin) {
     this.pin = pin;
+    this.frame.style.rotate = (pin.rotation ?? 0) + "deg";
+    this.updateGrip();
     this.root.style.left = pin.x + "px";
     this.root.style.top = pin.y + "px";
     this.root.style.width = pin.width + "px";
@@ -791,6 +878,39 @@ class FloatingBlock implements Selectable {
     }
   }
   position = () => this.pin;
+  bounds = () => rotatedBounds(this.pin);
+  openSettings = () => {
+    this.selection.select(this);
+    this.toolbar.querySelector(".cv-property-popover")?.remove();
+    const menu = document.createElement("div");
+    menu.className = "cv-property-popover cv-text-properties";
+    this.toolbar.append(menu);
+    const label = document.createElement("label");
+    label.textContent = "Width";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "200";
+    input.max = "1200";
+    input.value = String(Math.round(this.pin.width));
+    input.setAttribute("aria-label", "Text block width");
+    input.onchange = () =>
+      this.dispatch({
+        type: "place",
+        id: this.pin.id,
+        placement: { width: limit(Number(input.value) || 200, 200, 1200) },
+      });
+    label.append(input);
+    menu.append(label);
+    rotationField(menu, this.pin.rotation ?? 0, (n) => {
+      this.dispatch({
+        type: "place",
+        id: this.pin.id,
+        placement: { rotation: n },
+      });
+      this.selection.position();
+    });
+    this.selection.position();
+  };
   private select() {
     this.selection.select(this);
     this.root.focus({ preventScroll: true });
@@ -977,8 +1097,12 @@ class FloatingBlock implements Selectable {
             y: limit(start.y + dy, 0, 50000),
           };
         const horizontal = handle.includes("w") ? "w" : "e";
-        const next = resized(start, dx, 0, horizontal, 200, 24);
-        return { ...next, y: start.y, height: start.height };
+        const next = rotatedResize(start, dx, dy, horizontal, 200, 24);
+        return {
+          ...next,
+          y: start.rotation ? next.y : start.y,
+          height: start.height,
+        };
       },
       commit: (p) => {
         this.dispatch({
@@ -988,6 +1112,7 @@ class FloatingBlock implements Selectable {
             x: p.x,
             y: p.y,
             width: p.width,
+            rotation: p.rotation,
             height: Math.ceil(this.root.offsetHeight),
           },
         });
@@ -1000,6 +1125,7 @@ class FloatingBlock implements Selectable {
     });
   }
   destroy() {
+    this.cancelRotate();
     if (this.textarea && this.textarea.value !== this.draftBase) {
       const path = this.path;
       const drafts = (this.host.store.recoveryDrafts ??= []);

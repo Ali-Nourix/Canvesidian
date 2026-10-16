@@ -24,7 +24,7 @@ __export(main_exports, {
   default: () => Canvesidian
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian4 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // node_modules/@lezer/common/dist/index.js
 var DefaultBufferLength = 1024;
@@ -4289,17 +4289,18 @@ function restore(saved, source) {
   return { pins, detached };
 }
 function normalize(raw) {
-  const result = { version: 4, notes: {} };
+  const result = { version: 5, notes: {} };
   if (!raw || typeof raw !== "object") return result;
   const object = raw;
   if (object.version === 1) {
     result.legacyBoards = object.boards;
     return result;
   }
-  if (object.version !== 2 && object.version !== 3 && object.version !== 4)
+  if (object.version !== 2 && object.version !== 3 && object.version !== 4 && object.version !== 5)
     throw new Error(
       "Unsupported Canvesidian data version. Existing layout data was not overwritten."
     );
+  result.settings = normalizePreferences(object.settings);
   if (object.legacyBoards) result.legacyBoards = object.legacyBoards;
   result.toolDefaults = {};
   for (const [mode, v] of Object.entries(object.toolDefaults ?? {})) {
@@ -4313,12 +4314,20 @@ function normalize(raw) {
       "arrow",
       "sticky",
       "label",
-      "sticker"
+      "sticker",
+      "tape",
+      "icon",
+      "text",
+      "section",
+      "triangle",
+      "table",
+      "code"
     ].includes(mode) || !v)
       continue;
     if (!validStroke(v.stroke) || ![v.strokeWidth, v.opacity, v.fontSize].every(Number.isFinite))
       continue;
     result.toolDefaults[mode] = {
+      iconId: typeof v.iconId === "string" && /^[a-z0-9-]{1,100}$/.test(v.iconId) ? v.iconId : "star",
       stroke: v.stroke,
       strokeWidth: limit(v.strokeWidth, 1, 32),
       opacity: limit(v.opacity, 0.1, 1),
@@ -4344,6 +4353,7 @@ function normalize(raw) {
         ) && p.from >= 0 && p.to >= p.from
       ).map((p) => ({
         ...p,
+        rotation: normalizeAngle(p.rotation),
         x: limit(p.x, 0, 5e4),
         y: limit(p.y, 0, 5e4),
         width: limit(p.width, 200, 1200),
@@ -4367,12 +4377,25 @@ function normalizeDrawings(raw) {
       "arrow",
       "sticky",
       "label",
-      "sticker"
+      "sticker",
+      "tape",
+      "image",
+      "icon",
+      "triangle",
+      "text",
+      "section",
+      "table",
+      "code"
     ].includes(d.kind) && [d.x, d.y, d.width, d.height, d.strokeWidth, d.opacity].every(
       Number.isFinite
     ) && validStroke(d.stroke) && (d.kind !== "pen" || Array.isArray(d.points))
   ).map((d) => ({
     ...d,
+    rotation: normalizeAngle(d.rotation),
+    parentId: d.kind === "tape" && typeof d.parentId === "string" ? d.parentId : void 0,
+    rotationOffset: normalizeAngle(d.rotationOffset),
+    assetPath: safeAssetPath(d.assetPath) ? d.assetPath : void 0,
+    iconId: typeof d.iconId === "string" && /^[a-z0-9-]{1,100}$/.test(d.iconId) ? d.iconId : "star",
     text: typeof d.text === "string" ? d.text.slice(0, 1e4) : "",
     fontSize: Number.isFinite(d.fontSize) ? limit(d.fontSize, 12, 72) : 18,
     fill: d.fill === "none" || validStroke(d.fill) ? d.fill : "none",
@@ -4428,12 +4451,60 @@ var STICKERS = [
   { id: "flame", icon: "flame", label: "Flame", color: "#E56458" },
   { id: "sparkles", icon: "sparkles", label: "Sparkles", color: "#9B6BC1" }
 ];
+var normalizePreferences = (raw) => ({
+  dotGrid: raw?.dotGrid === true,
+  gridSpacing: Number.isFinite(raw?.gridSpacing) ? limit(raw.gridSpacing, 12, 64) : 24,
+  gridOpacity: Number.isFinite(raw?.gridOpacity) ? limit(raw.gridOpacity, 0.05, 0.4) : 0.15
+});
+var normalizeAngle = (n) => typeof n === "number" && Number.isFinite(n) ? (n % 360 + 540) % 360 - 180 : 0;
+var safeAssetPath = (p) => typeof p === "string" && !!p && !p.startsWith("/") && !p.includes("\\") && !p.split("/").some((s) => s === ".." || s === ".") && !/[:\x00-\x1f]/.test(p);
+function rotatedBounds(p) {
+  const a = (p.rotation ?? 0) * Math.PI / 180, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+  const width = p.width * c + p.height * s, height = p.width * s + p.height * c;
+  return {
+    ...p,
+    x: p.x + (p.width - width) / 2,
+    y: p.y + (p.height - height) / 2,
+    width,
+    height
+  };
+}
+function rotatedResize(p, dx, dy, h, minWidth = 24, minHeight = 24) {
+  const a = (p.rotation ?? 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  const next = resized(
+    p,
+    dx * c + dy * s,
+    -dx * s + dy * c,
+    h,
+    minWidth,
+    minHeight
+  );
+  const cx = next.x + next.width / 2 - (p.x + p.width / 2), cy = next.y + next.height / 2 - (p.y + p.height / 2);
+  return {
+    ...next,
+    rotation: p.rotation,
+    x: Math.max(0, p.x + p.width / 2 + cx * c - cy * s - next.width / 2),
+    y: Math.max(0, p.y + p.height / 2 + cx * s + cy * c - next.height / 2)
+  };
+}
+function tapeOnSticky(tape, parent) {
+  const a = (parent.rotation ?? 0) * Math.PI / 180, cx = parent.x + parent.width / 2, cy = parent.y + parent.height / 2;
+  return {
+    ...tape,
+    parentId: parent.id,
+    x: cx + Math.sin(a) * parent.height / 2 - tape.width / 2,
+    y: cy - Math.cos(a) * parent.height / 2 - tape.height / 2,
+    rotation: normalizeAngle(
+      (parent.rotation ?? 0) + (tape.rotationOffset ?? -8)
+    )
+  };
+}
 
 // src/spatial.ts
 var import_state = require("@codemirror/state");
 var import_view = require("@codemirror/view");
 var import_commands = require("@codemirror/commands");
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/interaction.ts
 var import_obsidian = require("obsidian");
@@ -4469,6 +4540,7 @@ function previewGesture(event, options) {
     if (current.width !== start.width) root.style.width = current.width + "px";
     if (options.explicitHeight && current.height !== start.height)
       root.style.height = current.height + "px";
+    options.preview?.(current);
   };
   const move = (e) => {
     if (e.pointerId !== event.pointerId || done) return;
@@ -4497,6 +4569,7 @@ function previewGesture(event, options) {
     options.end?.();
     if (!cancel && (value.x !== start.x || value.y !== start.y || value.width !== start.width || value.height !== start.height))
       options.commit(value);
+    options.finishPreview?.();
   };
   const up = (e) => {
     if (e.pointerId !== event.pointerId) return;
@@ -4531,17 +4604,21 @@ var Selection = class {
     const item = this.current;
     if (!item) return;
     const p = item.position();
-    const outside = p.x + p.width < this.scroller.scrollLeft || p.x > this.scroller.scrollLeft + this.scroller.clientWidth || p.y + p.height < this.scroller.scrollTop || p.y > this.scroller.scrollTop + this.scroller.clientHeight;
+    const bounds = item.bounds?.() ?? p;
+    const outside = bounds.x + bounds.width < this.scroller.scrollLeft || bounds.x > this.scroller.scrollLeft + this.scroller.clientWidth || bounds.y + bounds.height < this.scroller.scrollTop || bounds.y > this.scroller.scrollTop + this.scroller.clientHeight;
     item.toolbar.hidden = outside;
     if (outside) return;
     const width = item.toolbar.offsetWidth || 240;
     const left = this.scroller.scrollLeft, top = this.scroller.scrollTop;
     item.toolbar.style.left = limit(
-      0,
+      bounds.x - p.x,
       left + 8 - p.x,
       left + this.scroller.clientWidth - width - 8 - p.x
     ) + "px";
-    item.toolbar.style.top = Math.max(-(item.toolbar.offsetHeight || 40) - 8, top + 8 - p.y) + "px";
+    item.toolbar.style.top = Math.max(
+      bounds.y - p.y - (item.toolbar.offsetHeight || 40) - 8,
+      top + 8 - p.y
+    ) + "px";
   }
   remove(item) {
     if (this.current === item) this.select(null);
@@ -4558,9 +4635,149 @@ function addHandles(parent, onPointer, onKey) {
     parent.append(b);
   }
 }
+function leftGrip(root, read, drag, key) {
+  const b = iconButton(
+    root,
+    "grip-vertical",
+    "Move object from left",
+    () => root.focus({ preventScroll: true })
+  );
+  b.classList.add("cv-object-grip");
+  b.onpointerdown = drag;
+  if (key) b.onkeydown = key;
+  return () => {
+    const p = read(), a = rotatedBounds(p);
+    b.style.left = a.x - p.x - 36 + "px";
+    b.style.top = a.y - p.y + a.height / 2 - 16 + "px";
+  };
+}
+function rotationField(parent, value, change) {
+  const label = document.createElement("label");
+  label.className = "cv-rotation-field";
+  label.textContent = "Rotation";
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = "-180";
+  input.max = "180";
+  input.step = "1";
+  input.value = String(Math.round(value));
+  input.setAttribute("aria-label", "Rotation degrees");
+  input.onchange = () => {
+    const n = normalizeAngle(Number(input.value));
+    input.value = String(n);
+    change(n);
+  };
+  label.append(input);
+  parent.append(label);
+  return input;
+}
+function rotationHandle(root, frame, read, commit, preview) {
+  let cleanup = null;
+  const b = iconButton(
+    frame,
+    "rotate-cw",
+    "Rotate object",
+    () => root.focus({ preventScroll: true })
+  );
+  b.classList.add("cv-rotation-handle");
+  b.onkeydown = (e) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    commit(
+      normalizeAngle(
+        (read().rotation ?? 0) + (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 15 : 1)
+      )
+    );
+  };
+  b.onpointerdown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cleanup?.();
+    const p = read(), r = root.getBoundingClientRect(), cx = r.left + p.width / 2, cy = r.top + p.height / 2;
+    const initial = Math.atan2(e.clientY - cy, e.clientX - cx);
+    let angle = p.rotation ?? 0, raf = 0, done = false;
+    const move = (ev) => {
+      if (ev.pointerId !== e.pointerId) return;
+      angle = normalizeAngle(
+        (p.rotation ?? 0) + (Math.atan2(ev.clientY - cy, ev.clientX - cx) - initial) * 180 / Math.PI
+      );
+      if (ev.shiftKey) angle = Math.round(angle / 15) * 15;
+      if (!raf)
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          frame.style.rotate = angle + "deg";
+          preview?.({ ...p, rotation: angle });
+        });
+    };
+    const finish = (cancelled) => {
+      if (done) return;
+      done = true;
+      cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", blur);
+      frame.style.rotate = (cancelled ? p.rotation ?? 0 : angle) + "deg";
+      cleanup = null;
+      if (!cancelled) commit(angle);
+      preview?.(null);
+    };
+    const up = (ev) => {
+      if (ev.pointerId === e.pointerId) {
+        move(ev);
+        finish(false);
+      }
+    };
+    const cancel = (ev) => {
+      if (ev.pointerId === e.pointerId) finish(true);
+    };
+    const blur = () => finish(true);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", blur);
+    cleanup = () => finish(true);
+  };
+  return () => cleanup?.();
+}
 
 // src/design-tools.ts
+var import_obsidian3 = require("obsidian");
+
+// src/icon-picker.ts
 var import_obsidian2 = require("obsidian");
+function iconPicker(parent, selected, pick) {
+  const search = document.createElement("input");
+  search.type = "search";
+  search.placeholder = "Search Obsidian icons\u2026";
+  search.setAttribute("aria-label", "Search Obsidian icons");
+  search.className = "cv-icon-search";
+  const grid = document.createElement("div");
+  grid.className = "cv-icon-grid";
+  const status = document.createElement("p");
+  status.className = "cv-icon-status";
+  status.setAttribute("aria-live", "polite");
+  const ids = (0, import_obsidian2.getIconIds)();
+  const render = () => {
+    const query = search.value.trim().toLowerCase();
+    const found = ids.filter((id) => id.toLowerCase().includes(query));
+    grid.replaceChildren();
+    for (const id of found.slice(0, 60)) {
+      const b = iconButton(grid, id, id, () => {
+        selected = id;
+        pick(id);
+        grid.querySelectorAll("button").forEach((n) => n.setAttribute("aria-pressed", String(n === b)));
+      });
+      b.setAttribute("aria-pressed", String(selected === id));
+    }
+    status.textContent = found.length ? `${Math.min(60, found.length)} of ${found.length} icons${found.length > 60 ? " \u2014 refine search" : ""}` : "No matching icons";
+  };
+  search.oninput = render;
+  parent.append(search, grid, status);
+  render();
+}
 
 // src/tool-options.ts
 var COLORS = [
@@ -4584,10 +4801,11 @@ function defaultStyle(mode) {
   return {
     stroke: "currentColor",
     strokeWidth: mode === "highlighter" ? 24 : 2,
-    opacity: mode === "highlighter" ? 0.35 : 1,
-    fill: mode === "sticky" ? PAPERS[0] : mode === "label" ? PAPERS[1] : "none",
+    opacity: mode === "highlighter" ? 0.35 : mode === "tape" ? 0.45 : 1,
+    fill: mode === "tape" ? "#D5803B" : mode === "sticky" ? PAPERS[0] : mode === "label" ? PAPERS[1] : "none",
     fontSize: 18,
     sticker: "star",
+    iconId: "star",
     ...mode === "highlighter" ? { stroke: "#EAC26B" } : {}
   };
 }
@@ -4597,7 +4815,14 @@ function stylePanel(parent, kind, value, change) {
   panel.setAttribute("role", "group");
   panel.setAttribute("aria-label", "Appearance settings");
   parent.append(panel);
-  const textKind = kind === "sticky" || kind === "label";
+  const textKind = [
+    "sticky",
+    "label",
+    "text",
+    "section",
+    "table",
+    "code"
+  ].includes(kind);
   const row = (label) => {
     const wrap = document.createElement("div");
     wrap.className = "cv-option-row";
@@ -4664,7 +4889,15 @@ function stylePanel(parent, kind, value, change) {
     };
     wrap.append(input, output);
   };
-  if (kind === "sticker") {
+  if (kind === "icon") {
+    iconPicker(panel, value.iconId ?? "star", (iconId) => change({ iconId }));
+    swatches("Icon color", COLORS, "stroke");
+  } else if (kind === "image") {
+    number2("Opacity", "opacity", 0.1, 1, 0.05);
+  } else if (kind === "tape") {
+    swatches("Tape color", ["#D5803B", ...PAPERS], "fill");
+    number2("Opacity", "opacity", 0.1, 1, 0.05);
+  } else if (kind === "sticker") {
     const stamps = row("Sticker");
     const grid = document.createElement("div");
     grid.className = "cv-sticker-grid";
@@ -4680,7 +4913,7 @@ function stylePanel(parent, kind, value, change) {
     }
   } else {
     swatches(textKind ? "Text color" : "Stroke color", COLORS, "stroke");
-    if (textKind || ["rect", "ellipse", "diamond"].includes(kind))
+    if (textKind || ["rect", "ellipse", "diamond", "triangle"].includes(kind))
       swatches("Fill", textKind ? PAPERS : ["none", ...PAPERS], "fill");
     if (textKind) number2("Font size", "fontSize", 12, 48, 1);
     else number2("Size", "strokeWidth", 1, 32, 1);
@@ -4700,7 +4933,7 @@ function drawingStyle(d) {
 
 // src/design-tools.ts
 function confirmAction(app, title, message, label, confirm) {
-  class Confirm extends import_obsidian2.Modal {
+  class Confirm extends import_obsidian3.Modal {
     onOpen() {
       this.titleEl.textContent = title;
       const p = document.createElement("p");
@@ -4748,6 +4981,19 @@ function drawingSVG(d) {
     shape.setAttribute("cy", String(d.height / 2));
     shape.setAttribute("rx", String(Math.max(1, d.width / 2 - 1)));
     shape.setAttribute("ry", String(Math.max(1, d.height / 2 - 1)));
+  } else if (d.kind === "triangle") {
+    shape = document.createElementNS(NS, "polygon");
+    shape.setAttribute(
+      "points",
+      `${d.width / 2},1 ${d.width - 1},${d.height - 1} 1,${d.height - 1}`
+    );
+  } else if (d.kind === "tape") {
+    shape = document.createElementNS(NS, "polygon");
+    const w = d.width, h = d.height;
+    shape.setAttribute(
+      "points",
+      `0,0 ${w},2 ${w - 5},${h * 0.25} ${w},${h * 0.5} ${w - 6},${h * 0.75} ${w},${h} 2,${h - 1} 7,${h * 0.75} 1,${h * 0.5} 6,${h * 0.25}`
+    );
   } else if (d.kind === "diamond") {
     shape = document.createElementNS(NS, "polygon");
     shape.setAttribute(
@@ -4769,9 +5015,9 @@ function drawingSVG(d) {
   }
   shape.setAttribute(
     "fill",
-    ["rect", "ellipse", "diamond"].includes(d.kind) ? d.fill ?? "none" : "none"
+    ["rect", "ellipse", "diamond", "triangle", "tape"].includes(d.kind) ? d.fill ?? "none" : "none"
   );
-  shape.setAttribute("stroke", d.stroke);
+  shape.setAttribute("stroke", d.kind === "tape" ? "none" : d.stroke);
   shape.setAttribute("stroke-width", String(d.strokeWidth));
   shape.setAttribute("stroke-linecap", "round");
   shape.setAttribute("stroke-linejoin", "round");
@@ -4814,6 +5060,8 @@ var DesignTools = class {
     this.dock.setAttribute("role", "toolbar");
     this.dock.setAttribute("aria-label", "Note design tools");
     this.dock.dir = "ltr";
+    this.dock.contentEditable = "false";
+    this.dock.addEventListener("mousedown", (e) => e.stopPropagation());
     view.dom.append(this.dock);
     this.tray = document.createElement("div");
     this.tray.className = "cv-tool-tray";
@@ -4827,34 +5075,58 @@ var DesignTools = class {
     this.cleanups.push(
       () => view.dom.removeEventListener("pointerdown", this.outside)
     );
-    const tools = [
-      ["select", "mouse-pointer-2", "Select objects"],
-      ["pen", "pencil", "Draw with pen"],
-      ["highlighter", "highlighter", "Draw with highlighter"],
-      ["rect", "square", "Draw rectangle"],
-      ["ellipse", "circle", "Draw ellipse"],
-      ["line", "minus", "Draw line"],
-      ["diamond", "diamond", "Draw diamond"],
-      ["arrow", "arrow-up-right", "Draw arrow"],
-      ["sticky", "sticky-note", "Add sticky note"],
-      ["label", "tag", "Add label"],
-      ["sticker", "stamp", "Add sticker"]
+    const select = iconButton(
+      this.dock,
+      "mouse-pointer-2",
+      "Select objects",
+      () => this.setMode("select")
+    );
+    select.dataset.tool = "select";
+    const groups = [
+      ["Draw tools", "pencil", ["pen", "highlighter", "tape"]],
+      [
+        "Shapes and lines",
+        "shapes",
+        ["rect", "ellipse", "diamond", "triangle", "line", "arrow"]
+      ],
+      [
+        "Notes and labels",
+        "sticky-note",
+        ["sticky", "label", "text", "section", "table", "code"]
+      ],
+      ["Stickers", "stamp", ["sticker"]],
+      ["Images and icons", "image-plus", ["image", "icon"]]
     ];
-    for (const [mode, icon, label] of tools) {
-      const b = iconButton(this.dock, icon, label, () => {
-        const close = this.mode === mode && !this.tray.hidden;
-        this.setMode(mode);
-        if (mode !== "select" && !close) this.openOptions();
-      });
-      b.dataset.tool = mode;
-      b.setAttribute("aria-pressed", mode === "select" ? "true" : "false");
+    for (const [label, icon, modes] of groups) {
+      const b = iconButton(
+        this.dock,
+        icon,
+        label,
+        () => this.openGroup(label, [...modes])
+      );
+      b.dataset.group = label;
+      b.setAttribute("aria-expanded", "false");
     }
+    iconButton(this.dock, "sliders-horizontal", "Tool settings", () => {
+      if (this.mode === "select") {
+        if (this.selection.current?.openSettings)
+          this.selection.current.openSettings();
+        else this.cb.openPreferences();
+      } else this.openOptions();
+    });
     iconButton(
       this.dock,
-      "sliders-horizontal",
-      "Tool settings",
-      () => this.openOptions()
+      "settings",
+      "Plugin settings",
+      () => this.cb.openPreferences()
     );
+    const toggle = iconButton(
+      this.dock,
+      "wand-sparkles",
+      "Toggle note effects",
+      () => this.cb.toggle()
+    );
+    toggle.dataset.persistent = "true";
     this.dock.append(this.divider());
     iconButton(this.dock, "undo-2", "Undo drawing", () => this.undo());
     iconButton(this.dock, "redo-2", "Redo drawing", () => this.redo());
@@ -4948,6 +5220,113 @@ var DesignTools = class {
     d.setAttribute("aria-hidden", "true");
     return d;
   }
+  names = {
+    pen: "Draw with pen",
+    highlighter: "Draw with highlighter",
+    tape: "Add decorative tape",
+    rect: "Draw rectangle",
+    ellipse: "Draw ellipse",
+    diamond: "Draw diamond",
+    triangle: "Draw triangle",
+    line: "Draw line",
+    arrow: "Draw arrow",
+    sticky: "Add sticky note",
+    label: "Add label",
+    text: "Add text annotation",
+    section: "Add section",
+    table: "Add table annotation",
+    code: "Add code annotation",
+    sticker: "Add sticker",
+    image: "Import image from computer",
+    icon: "Add Obsidian icon"
+  };
+  openGroup(label, modes) {
+    this.tray.replaceChildren();
+    this.tray.hidden = false;
+    const title = document.createElement("div");
+    title.className = "cv-tray-title";
+    title.textContent = label;
+    this.tray.append(title);
+    const grid = document.createElement("div");
+    grid.className = "cv-tool-choices";
+    this.tray.append(grid);
+    const icons = {
+      pen: "pencil",
+      highlighter: "highlighter",
+      tape: "tape",
+      rect: "square",
+      ellipse: "circle",
+      diamond: "diamond",
+      triangle: "triangle",
+      line: "minus",
+      arrow: "arrow-up-right",
+      sticky: "sticky-note",
+      label: "tag",
+      text: "type",
+      section: "group",
+      table: "table",
+      code: "code",
+      sticker: "stamp",
+      image: "image-plus",
+      icon: "search"
+    };
+    for (const mode of modes) {
+      const b = iconButton(grid, icons[mode], this.names[mode], () => {
+        if (mode === "image") {
+          this.pickImage();
+          return;
+        }
+        const close = this.mode === mode && b.getAttribute("aria-pressed") === "true";
+        this.setMode(mode);
+        if (!close) this.openOptions();
+      });
+      b.dataset.tool = mode;
+      b.setAttribute("aria-pressed", String(this.mode === mode));
+      const text = document.createElement("span");
+      text.textContent = this.names[mode];
+      b.append(text);
+    }
+  }
+  pickImage() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/gif,image/webp";
+    input.setAttribute("aria-label", "Choose local image");
+    input.className = "cv-file-input";
+    this.dock.append(input);
+    input.oncancel = () => input.remove();
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      const path = this.cb.read().path;
+      try {
+        const asset = await this.cb.importImage(file, path);
+        const state = this.cb.read();
+        if (state.path !== path || !state.enabled || !this.dock.isConnected) {
+          this.cb.notify(
+            "Image copied to vault; note changed before placement. The file was kept."
+          );
+          return;
+        }
+        const s = this.view.scrollDOM;
+        const value = {
+          ...defaultStyle("image"),
+          ...asset,
+          id: crypto.randomUUID(),
+          kind: "image",
+          x: s.scrollLeft + Math.max(40, (s.clientWidth - asset.width) / 2),
+          y: s.scrollTop + 100
+        };
+        this.commit([...state.drawings, value]);
+        this.setMode("select");
+        this.selection.select(this.shapes.get(value.id) ?? null);
+      } catch (e) {
+        this.cb.notify(String(e));
+      }
+    };
+    input.click();
+  }
   settings() {
     if (!this.options.has(this.mode))
       this.options.set(
@@ -4958,7 +5337,7 @@ var DesignTools = class {
   }
   openOptions() {
     if (this.mode === "select") {
-      this.tray.hidden = true;
+      this.cb.openPreferences();
       return;
     }
     this.tray.replaceChildren();
@@ -4972,6 +5351,10 @@ var DesignTools = class {
       sticker: "Stickers"
     }[this.mode] ?? "Shape";
     this.tray.append(title);
+    const close = iconButton(this.tray, "x", "Close tool settings", () => {
+      this.tray.hidden = true;
+    });
+    close.classList.add("cv-tray-close");
     stylePanel(this.tray, this.mode, this.settings(), (patch) => {
       this.options.set(this.mode, { ...this.settings(), ...patch });
       this.cb.saveDefault(this.mode, this.settings());
@@ -4981,6 +5364,31 @@ var DesignTools = class {
   setMode(mode) {
     if (mode !== this.mode) this.disposeDrawing?.();
     this.mode = mode;
+    const groupFor = {
+      pen: "Draw tools",
+      highlighter: "Draw tools",
+      tape: "Draw tools",
+      rect: "Shapes and lines",
+      ellipse: "Shapes and lines",
+      diamond: "Shapes and lines",
+      triangle: "Shapes and lines",
+      line: "Shapes and lines",
+      arrow: "Shapes and lines",
+      sticky: "Notes and labels",
+      label: "Notes and labels",
+      text: "Notes and labels",
+      section: "Notes and labels",
+      table: "Notes and labels",
+      code: "Notes and labels",
+      sticker: "Stickers",
+      icon: "Images and icons"
+    };
+    this.dock.querySelectorAll("[data-group]").forEach(
+      (b) => b.setAttribute(
+        "aria-pressed",
+        String(b.dataset.group === groupFor[mode])
+      )
+    );
     this.tray.hidden = true;
     this.layer.classList.toggle("is-drawing-mode", mode !== "select");
     if (mode !== "select") this.selection.select(null);
@@ -5011,7 +5419,22 @@ var DesignTools = class {
       this.setMode("select");
     }
     const show = state.enabled && state.live && !!state.path;
-    this.dock.hidden = !show;
+    this.dock.hidden = !state.live || !state.path;
+    this.dock.classList.toggle("cv-effects-off", !state.enabled);
+    const toggle = this.dock.querySelector(
+      '[aria-label="Toggle note effects"]'
+    );
+    toggle?.setAttribute("aria-pressed", String(state.enabled));
+    const prefs = this.cb.getPreferences();
+    this.view.scrollDOM.classList.toggle("cv-dot-grid", show && prefs.dotGrid);
+    this.view.scrollDOM.style.setProperty(
+      "--cv-grid-spacing",
+      prefs.gridSpacing + "px"
+    );
+    this.view.scrollDOM.style.setProperty(
+      "--cv-grid-opacity",
+      String(prefs.gridOpacity)
+    );
     if (!show) this.setMode("select");
     for (const [id, obj] of this.shapes)
       if (!show || !state.drawings.some((d) => d.id === id)) {
@@ -5029,7 +5452,11 @@ var DesignTools = class {
             this.selection,
             (next) => this.change(next),
             () => this.remove(d.id),
-            (text) => this.cb.recover(state.path, text)
+            (text) => this.cb.recover(state.path, text),
+            (path) => this.cb.imageURL(path),
+            () => this.duplicate(d.id),
+            () => this.tapeSticky(d.id),
+            (p) => this.previewChildren(d.id, p)
           );
           this.shapes.set(d.id, object);
         }
@@ -5045,12 +5472,71 @@ var DesignTools = class {
     this.selection.position();
   }
   change(value) {
+    const all = this.cb.read().drawings, old = all.find((d) => d.id === value.id);
+    if (value.parentId) {
+      const parent = all.find((d) => d.id === value.parentId);
+      if (old && (old.x !== value.x || old.y !== value.y))
+        value = { ...value, parentId: void 0 };
+      else if (parent)
+        value = {
+          ...value,
+          rotationOffset: (value.rotation ?? 0) - (parent.rotation ?? 0)
+        };
+    }
     this.commit(
-      this.cb.read().drawings.map((d) => d.id === value.id ? value : d)
+      all.map(
+        (d) => d.id === value.id ? value : d.parentId === value.id ? tapeOnSticky(d, value) : d
+      )
     );
   }
+  previewChildren(id, placement) {
+    const parent = this.shapes.get(id);
+    if (!parent) return;
+    for (const child of this.shapes.values())
+      if (child.value.parentId === id) {
+        if (placement)
+          child.previewPlacement(
+            tapeOnSticky(child.value, { ...parent.value, ...placement })
+          );
+        else child.update(child.value);
+      }
+  }
+  tapeSticky(id) {
+    const parent = this.cb.read().drawings.find((d) => d.id === id);
+    if (!parent) return;
+    const tape = tapeOnSticky(
+      {
+        ...this.options.get("tape") ?? this.cb.getDefaults().tape ?? defaultStyle("tape"),
+        id: crypto.randomUUID(),
+        kind: "tape",
+        x: 0,
+        y: 0,
+        width: Math.min(140, parent.width * 0.65),
+        height: 32,
+        rotationOffset: -8
+      },
+      parent
+    );
+    this.commit([...this.cb.read().drawings, tape]);
+    this.selection.select(this.shapes.get(tape.id) ?? null);
+  }
+  duplicate(id) {
+    const old = this.cb.read().drawings.find((d) => d.id === id);
+    if (!old) return;
+    const next = {
+      ...old,
+      id: crypto.randomUUID(),
+      x: limit(old.x + 32, 0, 5e4),
+      y: limit(old.y + 32, 0, 5e4),
+      parentId: void 0
+    };
+    this.commit([...this.cb.read().drawings, next]);
+    this.selection.select(this.shapes.get(next.id) ?? null);
+  }
   remove(id) {
-    this.commit(this.cb.read().drawings.filter((d) => d.id !== id));
+    this.commit(
+      this.cb.read().drawings.filter((d) => d.id !== id && d.parentId !== id)
+    );
     this.dock.querySelector("[data-tool=select]")?.focus({ preventScroll: true });
   }
   commit(next) {
@@ -5086,23 +5572,34 @@ var DesignTools = class {
     this.tray.hidden = true;
     const mode = this.mode;
     const settings = { ...this.settings() };
-    if (["sticky", "label", "sticker"].includes(mode)) {
+    if ([
+      "sticky",
+      "label",
+      "sticker",
+      "tape",
+      "icon",
+      "text",
+      "section",
+      "table",
+      "code"
+    ].includes(mode)) {
       const [x, y] = this.point(event);
       const value2 = {
         id: crypto.randomUUID(),
         kind: mode,
         x,
         y,
-        width: mode === "sticker" ? 80 : mode === "label" ? 180 : 240,
-        height: mode === "sticker" ? 80 : mode === "label" ? 64 : 200,
+        width: ["sticker", "icon"].includes(mode) ? 80 : mode === "tape" ? 160 : ["section", "table", "code"].includes(mode) ? 400 : mode === "label" ? 180 : 240,
+        height: ["sticker", "icon"].includes(mode) ? 80 : mode === "tape" ? 36 : mode === "label" || mode === "text" ? 64 : 200,
         ...settings,
-        text: mode === "sticky" ? "Your idea\u2026" : mode === "label" ? "Label" : ""
+        text: mode === "sticky" ? "Your idea\u2026" : mode === "label" ? "Label" : mode === "text" ? "Text" : mode === "section" ? "Section" : mode === "table" ? "First cell	Second cell\nThird cell	Fourth cell" : mode === "code" ? 'const idea = "space to think";' : ""
       };
       this.commit([...this.cb.read().drawings, value2]);
       this.setMode("select");
       const object = this.shapes.get(value2.id);
       this.selection.select(object ?? null);
-      if (mode !== "sticker") object?.editText();
+      if (["sticky", "label", "text", "section", "table", "code"].includes(mode))
+        object?.editText();
       return;
     }
     const kind = mode === "highlighter" ? "pen" : mode;
@@ -5184,18 +5681,23 @@ var DesignTools = class {
     this.shapes.forEach((o) => o.destroy());
     this.shapes.clear();
     this.catcher.remove();
+    this.view.scrollDOM.classList.remove("cv-dot-grid");
     this.dock.remove();
     this.view.dom.classList.remove("cv-design-editor");
   }
 };
 var DrawingObject = class {
-  constructor(value, view, parent, selection, change, remove, recover) {
+  constructor(value, view, parent, selection, change, remove, recover, imageURL2, duplicate, addTape, children) {
     this.value = value;
     this.view = view;
     this.selection = selection;
     this.change = change;
     this.remove = remove;
     this.recover = recover;
+    this.imageURL = imageURL2;
+    this.duplicate = duplicate;
+    this.addTape = addTape;
+    this.children = children;
     this.id = value.id;
     this.root = document.createElement("div");
     this.root.className = "cv-drawing-object";
@@ -5217,7 +5719,18 @@ var DrawingObject = class {
     );
     grip.onpointerdown = (e) => this.gesture(e);
     grip.onkeydown = (e) => this.key(e);
-    if (!["sticky", "label", "sticker"].includes(value.kind)) {
+    if (![
+      "sticky",
+      "label",
+      "sticker",
+      "image",
+      "icon",
+      "text",
+      "section",
+      "tape",
+      "table",
+      "code"
+    ].includes(value.kind)) {
       iconButton(
         this.toolbar,
         "palette",
@@ -5231,7 +5744,9 @@ var DrawingObject = class {
         () => this.properties("width")
       );
     }
-    if (["sticky", "label"].includes(value.kind))
+    if (["sticky", "label", "text", "section", "table", "code"].includes(
+      value.kind
+    ))
       iconButton(
         this.toolbar,
         "pencil",
@@ -5251,11 +5766,43 @@ var DrawingObject = class {
       () => this.remove()
     );
     del.classList.add("cv-danger");
+    if (value.kind === "sticky")
+      iconButton(
+        this.toolbar,
+        "tape",
+        "Add tape to sticky",
+        () => this.addTape()
+      );
+    iconButton(
+      this.toolbar,
+      "copy",
+      "Duplicate object",
+      () => this.duplicate()
+    );
+    this.frame = document.createElement("div");
+    this.frame.className = "cv-rotated-frame";
+    this.root.append(this.frame);
+    this.updateGrip = leftGrip(
+      this.root,
+      () => this.value,
+      (e) => this.gesture(e),
+      (e) => this.key(e)
+    );
+    this.cancelRotate = rotationHandle(
+      this.root,
+      this.frame,
+      () => this.value,
+      (n) => {
+        this.change({ ...this.value, rotation: n });
+        this.selection.position();
+      },
+      (p) => this.children(p)
+    );
     this.visual = document.createElement("div");
     this.visual.className = "cv-drawing-visual";
-    this.root.append(this.visual);
+    this.frame.append(this.visual);
     addHandles(
-      this.root,
+      this.frame,
       (e, h) => this.gesture(e, h),
       (e, h) => this.key(e, h)
     );
@@ -5280,9 +5827,23 @@ var DrawingObject = class {
   id;
   visual;
   editing = false;
+  frame;
+  updateGrip;
+  cancelRotate;
   input = null;
   cancelGesture = null;
+  previewPlacement(p) {
+    Object.assign(this.root.style, {
+      left: p.x + "px",
+      top: p.y + "px",
+      width: p.width + "px",
+      height: p.height + "px"
+    });
+    this.frame.style.rotate = (p.rotation ?? 0) + "deg";
+  }
   position = () => this.value;
+  bounds = () => rotatedBounds(this.value);
+  openSettings = () => this.properties("all");
   select() {
     this.selection.select(this);
     this.root.focus({ preventScroll: true });
@@ -5296,24 +5857,73 @@ var DrawingObject = class {
       width: value.width + "px",
       height: value.height + "px"
     });
+    this.root.style.zIndex = value.parentId ? "9" : "";
+    this.frame.style.rotate = (value.rotation ?? 0) + "deg";
+    this.updateGrip();
     if (!this.editing && (!this.visual.firstChild || old !== value))
       this.render();
   }
   render() {
     const d = this.value;
     this.root.dataset.kind = d.kind;
-    if (d.kind === "sticky" || d.kind === "label") {
+    if (d.kind === "table") {
+      const table = document.createElement("table");
+      table.className = "cv-annotation-table";
+      for (const line of (d.text ?? "").split("\n").slice(0, 16)) {
+        const row = table.insertRow();
+        for (const cell of line.split("	").slice(0, 16)) {
+          const td = row.insertCell();
+          td.textContent = cell;
+          td.dir = "auto";
+        }
+      }
+      Object.assign(table.style, {
+        fontSize: (d.fontSize ?? 18) + "px",
+        color: d.stroke,
+        background: d.fill && d.fill !== "none" ? d.fill : "var(--background-primary)",
+        opacity: String(d.opacity)
+      });
+      this.visual.replaceChildren(table);
+    } else if (d.kind === "code") {
+      const pre = document.createElement("pre");
+      pre.className = "cv-code-annotation";
+      pre.textContent = d.text ?? "";
+      Object.assign(pre.style, {
+        fontSize: (d.fontSize ?? 16) + "px",
+        color: d.stroke,
+        background: d.fill && d.fill !== "none" ? d.fill : "var(--background-secondary)",
+        opacity: String(d.opacity)
+      });
+      this.visual.replaceChildren(pre);
+    } else if (["sticky", "label", "text", "section"].includes(d.kind)) {
       const text = document.createElement("div");
       text.className = "cv-annotation-text";
       text.dir = "auto";
       text.textContent = d.text ?? "";
       Object.assign(text.style, {
-        background: d.fill && d.fill !== "none" ? d.fill : "#FFF0AD",
-        color: d.stroke === "currentColor" ? "#2C2C2B" : d.stroke,
+        background: d.fill && d.fill !== "none" ? d.fill : ["text", "section"].includes(d.kind) ? "transparent" : "#FFF0AD",
+        color: d.stroke === "currentColor" ? ["text", "section"].includes(d.kind) ? "var(--text-normal)" : "#2C2C2B" : d.stroke,
         fontSize: (d.fontSize ?? 18) + "px",
         opacity: String(d.opacity)
       });
       this.visual.replaceChildren(text);
+    } else if (d.kind === "image") {
+      const img = document.createElement("img");
+      img.alt = d.text || "Imported image";
+      img.draggable = false;
+      const url = d.assetPath ? this.imageURL(d.assetPath) : "";
+      if (url) img.src = url;
+      else img.alt = "Image file missing from vault";
+      img.style.opacity = String(d.opacity);
+      this.visual.replaceChildren(img);
+    } else if (d.kind === "icon") {
+      const el = document.createElement("div");
+      el.className = "cv-placed-icon";
+      el.style.color = d.stroke;
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", d.iconId ?? "star");
+      (0, import_obsidian3.setIcon)(el, d.iconId ?? "star");
+      this.visual.replaceChildren(el);
     } else if (d.kind === "sticker") {
       const stamp = STICKERS.find((s) => s.id === d.sticker) ?? STICKERS[0];
       const el = document.createElement("div");
@@ -5321,12 +5931,15 @@ var DrawingObject = class {
       el.style.color = stamp.color;
       el.setAttribute("role", "img");
       el.setAttribute("aria-label", stamp.label);
-      (0, import_obsidian2.setIcon)(el, stamp.icon);
+      (0, import_obsidian3.setIcon)(el, stamp.icon);
       this.visual.replaceChildren(el);
     } else this.visual.replaceChildren(drawingSVG(d));
   }
   editText() {
-    if (this.editing || !["sticky", "label"].includes(this.value.kind)) return;
+    if (this.editing || !["sticky", "label", "text", "section", "table", "code"].includes(
+      this.value.kind
+    ))
+      return;
     this.select();
     this.editing = true;
     this.root.classList.add("is-editing");
@@ -5392,6 +6005,10 @@ var DrawingObject = class {
     this.toolbar.append(menu);
     if (type === "all") {
       menu.classList.add("cv-full-properties");
+      rotationField(menu, this.value.rotation ?? 0, (n) => {
+        this.change({ ...this.value, rotation: n });
+        this.selection.position();
+      });
       stylePanel(
         menu,
         this.value.kind,
@@ -5460,7 +6077,9 @@ var DrawingObject = class {
       root: this.root,
       start,
       explicitHeight: true,
-      project: (dx, dy) => h ? resized(start, dx, dy, h) : {
+      preview: (p) => this.children(p),
+      finishPreview: () => this.children(null),
+      project: (dx, dy) => h ? rotatedResize(start, dx, dy, h) : {
         ...start,
         x: limit(start.x + dx, 0, 5e4),
         y: limit(start.y + dy, 0, 5e4)
@@ -5497,7 +6116,7 @@ var DrawingObject = class {
     const [dx, dy] = d[e.key].map((n) => n * (e.shiftKey ? 10 : 1));
     this.change({
       ...this.value,
-      ...h ? resized(this.value, dx, dy, h) : {
+      ...h ? rotatedResize(this.value, dx, dy, h) : {
         x: limit(this.value.x + dx, 0, 5e4),
         y: limit(this.value.y + dy, 0, 5e4)
       }
@@ -5505,6 +6124,7 @@ var DrawingObject = class {
     this.selection.position();
   }
   destroy() {
+    this.cancelRotate();
     if (this.editing && this.input && this.input.value !== this.value.text)
       this.recover(this.input.value);
     this.cancelGesture?.();
@@ -5516,8 +6136,8 @@ var DrawingObject = class {
 // src/spatial.ts
 var action = import_state.StateEffect.define();
 var fields = /* @__PURE__ */ new WeakMap();
-var live = (state) => state.field(import_obsidian3.editorLivePreviewField, false) === true;
-var pathOf = (state) => state.field(import_obsidian3.editorInfoField, false)?.file?.path ?? "";
+var live = (state) => state.field(import_obsidian4.editorLivePreviewField, false) === true;
+var pathOf = (state) => state.field(import_obsidian4.editorInfoField, false)?.file?.path ?? "";
 var Hidden = class extends import_view.WidgetType {
   toDOM() {
     const el = document.createElement("span");
@@ -5558,8 +6178,14 @@ function reserve(value) {
   return Math.ceil(
     Math.max(
       800,
-      ...value.pins.map((p) => p.y + p.height + 120),
-      ...value.drawings.map((d) => d.y + d.height + 120)
+      ...value.pins.map((p) => {
+        const b = rotatedBounds(p);
+        return b.y + b.height + 160;
+      }),
+      ...value.drawings.map((d) => {
+        const b = rotatedBounds(d);
+        return b.y + b.height + 160;
+      })
     ) / 512
   ) * 512;
 }
@@ -5714,6 +6340,12 @@ function createSpatialExtension(host) {
           host.app,
           {
             read: () => view.state.field(field),
+            getPreferences: () => normalizePreferences(host.store.settings),
+            openPreferences: () => host.openPreferences(),
+            toggle: () => view.dispatch({ effects: action.of({ type: "toggle" }) }),
+            importImage: (file, path) => host.importImage(file, path),
+            imageURL: (path) => host.imageURL(path),
+            notify: (message) => host.notify(message),
             getDefaults: () => host.store.toolDefaults ?? {},
             saveDefault: (mode, style) => {
               host.store.toolDefaults = {
@@ -5743,7 +6375,7 @@ function createSpatialExtension(host) {
         );
         this.handle = document.createElement("button");
         this.handle.className = "cv-float-handle";
-        (0, import_obsidian3.setIcon)(this.handle, "grip-vertical");
+        (0, import_obsidian4.setIcon)(this.handle, "grip-vertical");
         this.handle.title = "Drag this block out of the text flow";
         this.handle.setAttribute("aria-label", "Float block under pointer");
         this.layer.append(this.handle);
@@ -5872,11 +6504,30 @@ function createSpatialExtension(host) {
         if (!coords) return;
         const rect = this.view.scrollDOM.getBoundingClientRect();
         this.hoverPos = pos;
+        let bounds = {
+          left: coords.left,
+          top: coords.top,
+          height: coords.bottom - coords.top
+        };
+        try {
+          const lineEnd2 = Math.min(
+            block.to,
+            this.view.state.doc.lineAt(block.from).to
+          );
+          const start = this.view.domAtPos(block.from), end = this.view.domAtPos(lineEnd2);
+          const range = document.createRange();
+          range.setStart(start.node, start.offset);
+          range.setEnd(end.node, end.offset);
+          const r = range.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) bounds = r;
+        } catch {
+        }
+        const size = matchMedia("(pointer:coarse)").matches ? 44 : 28;
         this.handle.style.left = Math.max(
-          4,
-          coords.left - rect.left + this.view.scrollDOM.scrollLeft - 36
+          0,
+          bounds.left - rect.left + this.view.scrollDOM.scrollLeft - size - 8
         ) + "px";
-        this.handle.style.top = coords.top - rect.top + this.view.scrollDOM.scrollTop + "px";
+        this.handle.style.top = bounds.top - rect.top + this.view.scrollDOM.scrollTop + (bounds.height - size) / 2 + "px";
         this.handle.hidden = false;
       }
       queueHover(event) {
@@ -5913,6 +6564,10 @@ function createSpatialExtension(host) {
     import_state.Prec.high(field),
     plugin
   ];
+}
+function refreshSpatial(view) {
+  if (fields.has(view))
+    view.dispatch({ effects: action.of({ type: "refresh" }) });
 }
 function toggleSpatial(view) {
   if (fields.has(view))
@@ -6038,15 +6693,43 @@ var FloatingBlock = class {
       () => this.remove()
     );
     del.classList.add("cv-danger");
+    iconButton(
+      toolbar,
+      "settings-2",
+      "Text block settings",
+      () => this.openSettings()
+    );
+    this.frame = document.createElement("div");
+    this.frame.className = "cv-rotated-frame cv-text-frame";
+    this.root.append(this.frame);
     this.body = document.createElement("div");
     this.body.className = "cv-floating-body markdown-rendered";
     this.body.dir = "auto";
     this.body.ondblclick = () => this.edit();
-    this.root.append(this.body);
+    this.frame.append(this.body);
     addHandles(
-      this.root,
+      this.frame,
       (e, h) => this.drag(e, h),
       (e) => this.nudge(e, true)
+    );
+    this.updateGrip = leftGrip(
+      this.root,
+      () => this.pin,
+      (e) => this.beginDrag(e),
+      (e) => this.nudge(e, false)
+    );
+    this.cancelRotate = rotationHandle(
+      this.root,
+      this.frame,
+      () => this.pin,
+      (n) => {
+        this.dispatch({
+          type: "place",
+          id: this.pin.id,
+          placement: { rotation: n }
+        });
+        this.selection.position();
+      }
     );
     this.resize = this.root.querySelector(".cv-handle-se");
     this.root.onpointerdown = (e) => {
@@ -6087,6 +6770,9 @@ var FloatingBlock = class {
   id;
   toolbar;
   editButton;
+  frame;
+  updateGrip;
+  cancelRotate;
   commitDraft = null;
   dragging = false;
   root;
@@ -6110,6 +6796,8 @@ var FloatingBlock = class {
   }
   update(pin) {
     this.pin = pin;
+    this.frame.style.rotate = (pin.rotation ?? 0) + "deg";
+    this.updateGrip();
     this.root.style.left = pin.x + "px";
     this.root.style.top = pin.y + "px";
     this.root.style.width = pin.width + "px";
@@ -6143,12 +6831,12 @@ var FloatingBlock = class {
   async render(text) {
     const generation = ++this.generation;
     this.life?.unload();
-    this.life = new import_obsidian3.Component();
+    this.life = new import_obsidian4.Component();
     this.life.load();
     const staging = document.createElement("div");
     this.body.replaceChildren(staging);
     try {
-      await import_obsidian3.MarkdownRenderer.render(
+      await import_obsidian4.MarkdownRenderer.render(
         this.host.app,
         text,
         staging,
@@ -6162,6 +6850,38 @@ var FloatingBlock = class {
     }
   }
   position = () => this.pin;
+  bounds = () => rotatedBounds(this.pin);
+  openSettings = () => {
+    this.selection.select(this);
+    this.toolbar.querySelector(".cv-property-popover")?.remove();
+    const menu = document.createElement("div");
+    menu.className = "cv-property-popover cv-text-properties";
+    this.toolbar.append(menu);
+    const label = document.createElement("label");
+    label.textContent = "Width";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "200";
+    input.max = "1200";
+    input.value = String(Math.round(this.pin.width));
+    input.setAttribute("aria-label", "Text block width");
+    input.onchange = () => this.dispatch({
+      type: "place",
+      id: this.pin.id,
+      placement: { width: limit(Number(input.value) || 200, 200, 1200) }
+    });
+    label.append(input);
+    menu.append(label);
+    rotationField(menu, this.pin.rotation ?? 0, (n) => {
+      this.dispatch({
+        type: "place",
+        id: this.pin.id,
+        placement: { rotation: n }
+      });
+      this.selection.position();
+    });
+    this.selection.position();
+  };
   select() {
     this.selection.select(this);
     this.root.focus({ preventScroll: true });
@@ -6251,7 +6971,7 @@ var FloatingBlock = class {
       }
     };
     this.commitDraft = commit;
-    (0, import_obsidian3.setIcon)(this.editButton, "check");
+    (0, import_obsidian4.setIcon)(this.editButton, "check");
     this.editButton.setAttribute("aria-label", "Finish editing this block");
     this.editButton.title = "Finish editing this block";
     this.sizeInput();
@@ -6275,7 +6995,7 @@ var FloatingBlock = class {
   finishEdit() {
     this.composing = false;
     this.commitDraft = null;
-    (0, import_obsidian3.setIcon)(this.editButton, "pencil");
+    (0, import_obsidian4.setIcon)(this.editButton, "pencil");
     this.editButton.setAttribute("aria-label", "Edit text in place");
     this.editButton.title = "Edit text in place";
     this.textarea = null;
@@ -6344,8 +7064,12 @@ var FloatingBlock = class {
             y: limit(start.y + dy, 0, 5e4)
           };
         const horizontal = handle.includes("w") ? "w" : "e";
-        const next = resized(start, dx, 0, horizontal, 200, 24);
-        return { ...next, y: start.y, height: start.height };
+        const next = rotatedResize(start, dx, dy, horizontal, 200, 24);
+        return {
+          ...next,
+          y: start.rotation ? next.y : start.y,
+          height: start.height
+        };
       },
       commit: (p) => {
         this.dispatch({
@@ -6355,6 +7079,7 @@ var FloatingBlock = class {
             x: p.x,
             y: p.y,
             width: p.width,
+            rotation: p.rotation,
             height: Math.ceil(this.root.offsetHeight)
           }
         });
@@ -6367,6 +7092,7 @@ var FloatingBlock = class {
     });
   }
   destroy() {
+    this.cancelRotate();
     if (this.textarea && this.textarea.value !== this.draftBase) {
       const path = this.path;
       const drafts = this.host.store.recoveryDrafts ??= [];
@@ -6394,9 +7120,101 @@ var FloatingBlock = class {
   }
 };
 
+// src/plugin-settings.ts
+var import_obsidian5 = require("obsidian");
+function preferenceControls(container, host) {
+  const prefs = () => normalizePreferences(host.store.settings);
+  const set = (patch) => {
+    host.store.settings = { ...prefs(), ...patch };
+    host.scheduleSave();
+    host.refreshDesign();
+  };
+  new import_obsidian5.Setting(container).setName("Dotted note background").setDesc(
+    "Show the grid only while spatial effects are enabled. Your Markdown is unchanged."
+  ).addToggle(
+    (c) => c.setValue(prefs().dotGrid).onChange((v) => set({ dotGrid: v }))
+  );
+  new import_obsidian5.Setting(container).setName("Dot spacing").addSlider(
+    (c) => c.setLimits(12, 64, 4).setValue(prefs().gridSpacing).setDynamicTooltip().onChange((v) => set({ gridSpacing: v }))
+  );
+  new import_obsidian5.Setting(container).setName("Dot opacity").addSlider(
+    (c) => c.setLimits(5, 40, 5).setValue(prefs().gridOpacity * 100).setDynamicTooltip().onChange((v) => set({ gridOpacity: v / 100 }))
+  );
+  const p = document.createElement("p");
+  p.className = "cv-settings-note";
+  p.textContent = "Effects visibility is per note and non-destructive. Reset is separate and asks for confirmation. Images are copied into the vault; deleting their annotation does not delete the image file.";
+  container.append(p);
+}
+var CanvesidianSettings = class extends import_obsidian5.PluginSettingTab {
+  constructor(app, plugin, host) {
+    super(app, plugin);
+    this.host = host;
+  }
+  display() {
+    this.containerEl.replaceChildren();
+    preferenceControls(this.containerEl, this.host);
+  }
+};
+function openPreferences(app, host) {
+  class Preferences extends import_obsidian5.Modal {
+    onOpen() {
+      this.titleEl.textContent = "Canvesidian settings";
+      preferenceControls(this.contentEl, host);
+    }
+    onClose() {
+      this.contentEl.replaceChildren();
+    }
+  }
+  new Preferences(app).open();
+}
+
+// src/assets.ts
+var import_obsidian6 = require("obsidian");
+
+// src/raster.ts
+function rasterExtension(bytes) {
+  if (bytes.length > 20 * 1024 * 1024)
+    throw Error("Images must be at most 20 MB.");
+  if (bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71)
+    return "png";
+  if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "jpg";
+  const text = new TextDecoder("ascii").decode(bytes.slice(0, 16));
+  if (text.startsWith("GIF87a") || text.startsWith("GIF89a")) return "gif";
+  if (text.startsWith("RIFF") && text.slice(8, 12) === "WEBP") return "webp";
+  throw Error(
+    "Choose a PNG, JPEG, GIF or WebP image. SVG and other files are not imported."
+  );
+}
+
+// src/assets.ts
+async function importRaster(app, file, sourcePath) {
+  if (file.size > 20 * 1024 * 1024)
+    throw Error("Images must be at most 20 MB.");
+  const bytes = await file.arrayBuffer();
+  const extension = rasterExtension(new Uint8Array(bytes));
+  const bitmap = await createImageBitmap(new Blob([bytes]));
+  const ratio = bitmap.width / bitmap.height;
+  bitmap.close();
+  const base = file.name.replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}_ -]/gu, "").slice(0, 64) || "image";
+  const assetPath = await app.fileManager.getAvailablePathForAttachment(
+    base + "." + extension,
+    sourcePath
+  );
+  await app.vault.createBinary(assetPath, bytes);
+  return {
+    assetPath,
+    width: 320,
+    height: Math.max(24, Math.min(1200, 320 / ratio))
+  };
+}
+function imageURL(app, path) {
+  const file = app.vault.getAbstractFileByPath(path);
+  return file instanceof import_obsidian6.TFile ? app.vault.getResourcePath(file) : "";
+}
+
 // src/main.ts
-var Canvesidian = class extends import_obsidian4.Plugin {
-  store = { version: 4, notes: {} };
+var Canvesidian = class extends import_obsidian7.Plugin {
+  store = { version: 5, notes: {} };
   views = /* @__PURE__ */ new Set();
   dataReady = false;
   timer;
@@ -6405,16 +7223,17 @@ var Canvesidian = class extends import_obsidian4.Plugin {
     try {
       this.store = normalize(await this.loadData());
     } catch (e) {
-      new import_obsidian4.Notice(String(e));
+      new import_obsidian7.Notice(String(e));
       return;
     }
     this.dataReady = true;
+    this.addSettingTab(new CanvesidianSettings(this.app, this, this));
     this.registerEditorExtension(createSpatialExtension(this));
     this.addCommand({
       id: "recover-interrupted-drafts",
       name: "Recover interrupted block drafts",
       callback: () => {
-        const modal = new import_obsidian4.Modal(this.app);
+        const modal = new import_obsidian7.Modal(this.app);
         modal.titleEl.setText("Interrupted block drafts");
         const drafts = this.store.recoveryDrafts ?? [];
         if (!drafts.length)
@@ -6475,9 +7294,21 @@ var Canvesidian = class extends import_obsidian4.Plugin {
       })
     );
   }
+  refreshDesign() {
+    for (const view of this.views) refreshSpatial(view);
+  }
+  openPreferences() {
+    openPreferences(this.app, this);
+  }
+  importImage(file, path) {
+    return importRaster(this.app, file, path);
+  }
+  imageURL(path) {
+    return imageURL(this.app, path);
+  }
   findView(editor, _info) {
     return [...this.views].find(
-      (v) => v.state.field(import_obsidian4.editorInfoField, false)?.editor === editor
+      (v) => v.state.field(import_obsidian7.editorInfoField, false)?.editor === editor
     );
   }
   scheduleSave() {
@@ -6497,7 +7328,7 @@ var Canvesidian = class extends import_obsidian4.Plugin {
       await this.writes;
     } catch (e) {
       console.error(e);
-      new import_obsidian4.Notice("Canvesidian could not save placement. Check vault storage.");
+      new import_obsidian7.Notice("Canvesidian could not save placement. Check vault storage.");
     }
   }
   onunload() {
@@ -6505,6 +7336,6 @@ var Canvesidian = class extends import_obsidian4.Plugin {
     void this.flush();
   }
   notify(message) {
-    new import_obsidian4.Notice(message);
+    new import_obsidian7.Notice(message);
   }
 };

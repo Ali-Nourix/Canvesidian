@@ -396,7 +396,7 @@
   }
   .cv-tool-dock {
     display: grid;
-    grid-template-columns: repeat(5, 44px);
+    grid-template-columns: repeat(6, 44px);
     gap: 2px;
   }
   .cv-tool-dock .cv-tool-divider {
@@ -663,4 +663,230 @@
 
 .cv-icon-button[hidden] {
   display: none !important;
+}
+/* v0.5: rotation affects content and frame, never the contextual toolbar. */
+.cv-floating-block.is-selected,
+.cv-drawing-object.is-selected {
+  outline: none;
+}
+.cv-rotated-frame {
+  position: absolute;
+  inset: 0;
+  transform-origin: center;
+  pointer-events: auto;
+}
+.cv-text-frame {
+  position: relative;
+  inset: auto;
+  min-height: 28px;
+}
+.is-selected > .cv-rotated-frame {
+  outline: 1.5px solid var(--cv-selection, #2783de);
+}
+.is-selected > .cv-rotated-frame > .cv-resize-handle {
+  display: flex;
+}
+.cv-object-grip {
+  position: absolute;
+  width: 28px;
+  height: 32px;
+  min-width: 28px;
+  opacity: 0;
+  cursor: grab;
+  touch-action: none;
+}
+.is-selected > .cv-object-grip,
+.cv-floating-block:hover > .cv-object-grip,
+.cv-drawing-object:hover > .cv-object-grip,
+.cv-object-grip:focus-visible {
+  opacity: 1;
+}
+.cv-rotation-handle {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: -38px;
+  transform: translateX(-50%);
+  cursor: grab;
+  touch-action: none;
+  background: var(--background-primary) !important;
+  border: 1px solid var(--background-modifier-border) !important;
+  border-radius: 50%;
+  z-index: 14;
+}
+.is-selected > .cv-rotated-frame > .cv-rotation-handle {
+  display: inline-flex;
+}
+.cv-rotation-handle svg {
+  width: 14px;
+  height: 14px;
+}
+.cv-rotation-field,
+.cv-text-properties label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+}
+.cv-rotation-field input,
+.cv-text-properties input {
+  width: 80px;
+}
+.cv-text-properties {
+  flex-direction: column !important;
+  min-width: 200px;
+}
+.cv-full-properties {
+  flex-direction: column !important;
+  gap: 12px;
+}
+.cv-tool-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.cv-tool-choices .cv-icon-button {
+  width: auto;
+  min-height: 52px;
+  height: auto;
+  gap: 6px;
+  flex-direction: column;
+  padding: 8px !important;
+  white-space: normal;
+  font-size: 14px;
+  line-height: 1.3;
+  text-align: center;
+}
+.cv-tray-close {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+}
+.cv-tray-title {
+  padding-right: 28px;
+}
+.cv-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  max-height: 192px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.cv-icon-search {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+}
+.cv-icon-status,
+.cv-settings-note {
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  white-space: normal;
+}
+.cv-placed-icon,
+.cv-placed-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.cv-placed-icon svg {
+  stroke-width: 1.5;
+}
+.cv-drawing-visual > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+}
+.cv-drawing-object[data-kind="section"] .cv-annotation-text {
+  border: 1px dashed var(--text-muted);
+  background: transparent;
+  padding: 12px;
+}
+.cv-drawing-object[data-kind="text"] .cv-annotation-text {
+  padding: 4px;
+}
+.cv-dot-grid {
+  background-image: radial-gradient(
+    circle,
+    color-mix(
+        in srgb,
+        var(--text-normal) calc(var(--cv-grid-opacity, 0.15) * 100%),
+        transparent
+      )
+      1px,
+    transparent 1px
+  );
+  background-size: var(--cv-grid-spacing, 24px) var(--cv-grid-spacing, 24px);
+  background-attachment: local;
+}
+.cv-tool-dock.cv-effects-off
+  > :not([data-persistent="true"]):not([aria-label="Plugin settings"]) {
+  display: none !important;
+}
+.cv-tool-dock.cv-effects-off {
+  display: flex;
+}
+.cv-tool-dock [aria-label="Toggle note effects"][aria-pressed="false"] {
+  color: var(--text-muted);
+}
+.cv-file-input {
+  display: none;
+}
+.is-drawing-mode > .cv-floating-block > .cv-rotated-frame,
+.is-drawing-mode > .cv-drawing-object > .cv-rotated-frame,
+.is-drawing-mode .cv-object-grip {
+  pointer-events: none;
+}
+@media (pointer: coarse) {
+  .cv-object-grip {
+    width: 32px;
+    min-width: 32px;
+  }
+  .cv-rotation-handle {
+    bottom: -48px;
+  }
+  .cv-icon-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .cv-tool-dock {
+    grid-template-columns: repeat(6, 44px);
+  }
+}
+.cv-annotation-table {
+  width: 100%;
+  height: 100%;
+  border-collapse: collapse;
+  background: var(--background-primary);
+  table-layout: fixed;
+}
+.cv-annotation-table td {
+  border: 1px solid var(--background-modifier-border);
+  padding: 8px;
+  overflow-wrap: anywhere;
+}
+.cv-code-annotation {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  border-radius: 8px;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  white-space: pre-wrap;
+  overflow: auto;
+  font-family: var(--font-monospace, monospace);
+}
+
+.cv-plugin-settings .setting-item {
+  white-space: normal;
+}
+.cv-floating-block {
+  background: transparent;
+}
+.cv-text-frame {
+  background: var(--background-primary);
 }

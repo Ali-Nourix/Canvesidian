@@ -7,6 +7,10 @@ import {
   Placement,
   limit,
   STICKERS,
+  rotatedBounds,
+  rotatedResize,
+  PluginPreferences,
+  tapeOnSticky,
 } from "./model";
 import {
   Selection,
@@ -16,6 +20,9 @@ import {
   Handle,
   previewGesture,
   resized,
+  leftGrip,
+  rotationField,
+  rotationHandle,
 } from "./interaction";
 
 import {
@@ -69,6 +76,15 @@ export interface DesignCallbacks {
   };
   setDrawings: (next: Drawing[]) => void;
   reset: () => void;
+  toggle: () => void;
+  getPreferences: () => PluginPreferences;
+  openPreferences: () => void;
+  importImage: (
+    file: File,
+    path: string,
+  ) => Promise<{ assetPath: string; width: number; height: number }>;
+  imageURL: (path: string) => string;
+  notify: (message: string) => void;
   getDefaults: () => Record<string, ToolStyle>;
   saveDefault: (mode: string, style: ToolStyle) => void;
   recover: (path: string, text: string) => void;
@@ -93,6 +109,20 @@ export function drawingSVG(d: Drawing) {
     shape.setAttribute("cy", String(d.height / 2));
     shape.setAttribute("rx", String(Math.max(1, d.width / 2 - 1)));
     shape.setAttribute("ry", String(Math.max(1, d.height / 2 - 1)));
+  } else if (d.kind === "triangle") {
+    shape = document.createElementNS(NS, "polygon");
+    shape.setAttribute(
+      "points",
+      `${d.width / 2},1 ${d.width - 1},${d.height - 1} 1,${d.height - 1}`,
+    );
+  } else if (d.kind === "tape") {
+    shape = document.createElementNS(NS, "polygon");
+    const w = d.width,
+      h = d.height;
+    shape.setAttribute(
+      "points",
+      `0,0 ${w},2 ${w - 5},${h * 0.25} ${w},${h * 0.5} ${w - 6},${h * 0.75} ${w},${h} 2,${h - 1} 7,${h * 0.75} 1,${h * 0.5} 6,${h * 0.25}`,
+    );
   } else if (d.kind === "diamond") {
     shape = document.createElementNS(NS, "polygon");
     shape.setAttribute(
@@ -117,11 +147,11 @@ export function drawingSVG(d: Drawing) {
   }
   shape.setAttribute(
     "fill",
-    ["rect", "ellipse", "diamond"].includes(d.kind)
+    ["rect", "ellipse", "diamond", "triangle", "tape"].includes(d.kind)
       ? (d.fill ?? "none")
       : "none",
   );
-  shape.setAttribute("stroke", d.stroke);
+  shape.setAttribute("stroke", d.kind === "tape" ? "none" : d.stroke);
   shape.setAttribute("stroke-width", String(d.strokeWidth));
   shape.setAttribute("stroke-linecap", "round");
   shape.setAttribute("stroke-linejoin", "round");
@@ -181,6 +211,8 @@ export class DesignTools {
     this.dock.setAttribute("role", "toolbar");
     this.dock.setAttribute("aria-label", "Note design tools");
     this.dock.dir = "ltr";
+    this.dock.contentEditable = "false";
+    this.dock.addEventListener("mousedown", (e) => e.stopPropagation());
     view.dom.append(this.dock);
     this.tray = document.createElement("div");
     this.tray.className = "cv-tool-tray";
@@ -194,31 +226,52 @@ export class DesignTools {
     this.cleanups.push(() =>
       view.dom.removeEventListener("pointerdown", this.outside),
     );
-    const tools = [
-      ["select", "mouse-pointer-2", "Select objects"],
-      ["pen", "pencil", "Draw with pen"],
-      ["highlighter", "highlighter", "Draw with highlighter"],
-      ["rect", "square", "Draw rectangle"],
-      ["ellipse", "circle", "Draw ellipse"],
-      ["line", "minus", "Draw line"],
-      ["diamond", "diamond", "Draw diamond"],
-      ["arrow", "arrow-up-right", "Draw arrow"],
-      ["sticky", "sticky-note", "Add sticky note"],
-      ["label", "tag", "Add label"],
-      ["sticker", "stamp", "Add sticker"],
-    ];
-    for (const [mode, icon, label] of tools) {
-      const b = iconButton(this.dock, icon, label, () => {
-        const close = this.mode === mode && !this.tray.hidden;
-        this.setMode(mode);
-        if (mode !== "select" && !close) this.openOptions();
-      });
-      b.dataset.tool = mode;
-      b.setAttribute("aria-pressed", mode === "select" ? "true" : "false");
-    }
-    iconButton(this.dock, "sliders-horizontal", "Tool settings", () =>
-      this.openOptions(),
+    const select = iconButton(
+      this.dock,
+      "mouse-pointer-2",
+      "Select objects",
+      () => this.setMode("select"),
     );
+    select.dataset.tool = "select";
+    const groups = [
+      ["Draw tools", "pencil", ["pen", "highlighter", "tape"]],
+      [
+        "Shapes and lines",
+        "shapes",
+        ["rect", "ellipse", "diamond", "triangle", "line", "arrow"],
+      ],
+      [
+        "Notes and labels",
+        "sticky-note",
+        ["sticky", "label", "text", "section", "table", "code"],
+      ],
+      ["Stickers", "stamp", ["sticker"]],
+      ["Images and icons", "image-plus", ["image", "icon"]],
+    ] as const;
+    for (const [label, icon, modes] of groups) {
+      const b = iconButton(this.dock, icon, label, () =>
+        this.openGroup(label, [...modes]),
+      );
+      b.dataset.group = label;
+      b.setAttribute("aria-expanded", "false");
+    }
+    iconButton(this.dock, "sliders-horizontal", "Tool settings", () => {
+      if (this.mode === "select") {
+        if (this.selection.current?.openSettings)
+          this.selection.current.openSettings();
+        else this.cb.openPreferences();
+      } else this.openOptions();
+    });
+    iconButton(this.dock, "settings", "Plugin settings", () =>
+      this.cb.openPreferences(),
+    );
+    const toggle = iconButton(
+      this.dock,
+      "wand-sparkles",
+      "Toggle note effects",
+      () => this.cb.toggle(),
+    );
+    toggle.dataset.persistent = "true";
     this.dock.append(this.divider());
     iconButton(this.dock, "undo-2", "Undo drawing", () => this.undo());
     iconButton(this.dock, "redo-2", "Redo drawing", () => this.redo());
@@ -302,6 +355,114 @@ export class DesignTools {
     d.setAttribute("aria-hidden", "true");
     return d;
   }
+  private names: Record<string, string> = {
+    pen: "Draw with pen",
+    highlighter: "Draw with highlighter",
+    tape: "Add decorative tape",
+    rect: "Draw rectangle",
+    ellipse: "Draw ellipse",
+    diamond: "Draw diamond",
+    triangle: "Draw triangle",
+    line: "Draw line",
+    arrow: "Draw arrow",
+    sticky: "Add sticky note",
+    label: "Add label",
+    text: "Add text annotation",
+    section: "Add section",
+    table: "Add table annotation",
+    code: "Add code annotation",
+    sticker: "Add sticker",
+    image: "Import image from computer",
+    icon: "Add Obsidian icon",
+  };
+  private openGroup(label: string, modes: readonly string[]) {
+    this.tray.replaceChildren();
+    this.tray.hidden = false;
+    const title = document.createElement("div");
+    title.className = "cv-tray-title";
+    title.textContent = label;
+    this.tray.append(title);
+    const grid = document.createElement("div");
+    grid.className = "cv-tool-choices";
+    this.tray.append(grid);
+    const icons: Record<string, string> = {
+      pen: "pencil",
+      highlighter: "highlighter",
+      tape: "tape",
+      rect: "square",
+      ellipse: "circle",
+      diamond: "diamond",
+      triangle: "triangle",
+      line: "minus",
+      arrow: "arrow-up-right",
+      sticky: "sticky-note",
+      label: "tag",
+      text: "type",
+      section: "group",
+      table: "table",
+      code: "code",
+      sticker: "stamp",
+      image: "image-plus",
+      icon: "search",
+    };
+    for (const mode of modes) {
+      const b = iconButton(grid, icons[mode], this.names[mode], () => {
+        if (mode === "image") {
+          this.pickImage();
+          return;
+        }
+        const close =
+          this.mode === mode && b.getAttribute("aria-pressed") === "true";
+        this.setMode(mode);
+        if (!close) this.openOptions();
+      });
+      b.dataset.tool = mode;
+      b.setAttribute("aria-pressed", String(this.mode === mode));
+      const text = document.createElement("span");
+      text.textContent = this.names[mode];
+      b.append(text);
+    }
+  }
+  private pickImage() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/gif,image/webp";
+    input.setAttribute("aria-label", "Choose local image");
+    input.className = "cv-file-input";
+    this.dock.append(input);
+    input.oncancel = () => input.remove();
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      const path = this.cb.read().path;
+      try {
+        const asset = await this.cb.importImage(file, path);
+        const state = this.cb.read();
+        if (state.path !== path || !state.enabled || !this.dock.isConnected) {
+          this.cb.notify(
+            "Image copied to vault; note changed before placement. The file was kept.",
+          );
+          return;
+        }
+        const s = this.view.scrollDOM;
+        const value: Drawing = {
+          ...defaultStyle("image"),
+          ...asset,
+          id: crypto.randomUUID(),
+          kind: "image",
+          x: s.scrollLeft + Math.max(40, (s.clientWidth - asset.width) / 2),
+          y: s.scrollTop + 100,
+        };
+        this.commit([...state.drawings, value]);
+        this.setMode("select");
+        this.selection.select(this.shapes.get(value.id) ?? null);
+      } catch (e) {
+        this.cb.notify(String(e));
+      }
+    };
+    input.click();
+  }
   private settings() {
     if (!this.options.has(this.mode))
       this.options.set(
@@ -312,7 +473,7 @@ export class DesignTools {
   }
   private openOptions() {
     if (this.mode === "select") {
-      this.tray.hidden = true;
+      this.cb.openPreferences();
       return;
     }
     this.tray.replaceChildren();
@@ -329,6 +490,10 @@ export class DesignTools {
         } as Record<string, string>
       )[this.mode] ?? "Shape";
     this.tray.append(title);
+    const close = iconButton(this.tray, "x", "Close tool settings", () => {
+      this.tray.hidden = true;
+    });
+    close.classList.add("cv-tray-close");
     stylePanel(this.tray, this.mode, this.settings(), (patch) => {
       this.options.set(this.mode, { ...this.settings(), ...patch });
       this.cb.saveDefault(this.mode, this.settings());
@@ -338,6 +503,33 @@ export class DesignTools {
   setMode(mode: string) {
     if (mode !== this.mode) this.disposeDrawing?.();
     this.mode = mode;
+    const groupFor: Record<string, string> = {
+      pen: "Draw tools",
+      highlighter: "Draw tools",
+      tape: "Draw tools",
+      rect: "Shapes and lines",
+      ellipse: "Shapes and lines",
+      diamond: "Shapes and lines",
+      triangle: "Shapes and lines",
+      line: "Shapes and lines",
+      arrow: "Shapes and lines",
+      sticky: "Notes and labels",
+      label: "Notes and labels",
+      text: "Notes and labels",
+      section: "Notes and labels",
+      table: "Notes and labels",
+      code: "Notes and labels",
+      sticker: "Stickers",
+      icon: "Images and icons",
+    };
+    this.dock
+      .querySelectorAll<HTMLButtonElement>("[data-group]")
+      .forEach((b) =>
+        b.setAttribute(
+          "aria-pressed",
+          String(b.dataset.group === groupFor[mode]),
+        ),
+      );
     this.tray.hidden = true;
     this.layer.classList.toggle("is-drawing-mode", mode !== "select");
     if (mode !== "select") this.selection.select(null);
@@ -369,7 +561,22 @@ export class DesignTools {
       this.setMode("select");
     }
     const show = state.enabled && state.live && !!state.path;
-    this.dock.hidden = !show;
+    this.dock.hidden = !state.live || !state.path;
+    this.dock.classList.toggle("cv-effects-off", !state.enabled);
+    const toggle = this.dock.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle note effects"]',
+    );
+    toggle?.setAttribute("aria-pressed", String(state.enabled));
+    const prefs = this.cb.getPreferences();
+    this.view.scrollDOM.classList.toggle("cv-dot-grid", show && prefs.dotGrid);
+    this.view.scrollDOM.style.setProperty(
+      "--cv-grid-spacing",
+      prefs.gridSpacing + "px",
+    );
+    this.view.scrollDOM.style.setProperty(
+      "--cv-grid-opacity",
+      String(prefs.gridOpacity),
+    );
     if (!show) this.setMode("select");
     for (const [id, obj] of this.shapes)
       if (!show || !state.drawings.some((d) => d.id === id)) {
@@ -388,6 +595,10 @@ export class DesignTools {
             (next) => this.change(next),
             () => this.remove(d.id),
             (text) => this.cb.recover(state.path, text),
+            (path) => this.cb.imageURL(path),
+            () => this.duplicate(d.id),
+            () => this.tapeSticky(d.id),
+            (p) => this.previewChildren(d.id, p),
           );
           this.shapes.set(d.id, object);
         }
@@ -404,12 +615,78 @@ export class DesignTools {
     this.selection.position();
   }
   change(value: Drawing) {
+    const all = this.cb.read().drawings,
+      old = all.find((d) => d.id === value.id);
+    if (value.parentId) {
+      const parent = all.find((d) => d.id === value.parentId);
+      if (old && (old.x !== value.x || old.y !== value.y))
+        value = { ...value, parentId: undefined };
+      else if (parent)
+        value = {
+          ...value,
+          rotationOffset: (value.rotation ?? 0) - (parent.rotation ?? 0),
+        };
+    }
     this.commit(
-      this.cb.read().drawings.map((d) => (d.id === value.id ? value : d)),
+      all.map((d) =>
+        d.id === value.id
+          ? value
+          : d.parentId === value.id
+            ? tapeOnSticky(d, value)
+            : d,
+      ),
     );
   }
+  private previewChildren(id: string, placement: Placement | null) {
+    const parent = this.shapes.get(id);
+    if (!parent) return;
+    for (const child of this.shapes.values())
+      if (child.value.parentId === id) {
+        if (placement)
+          child.previewPlacement(
+            tapeOnSticky(child.value, { ...parent.value, ...placement }),
+          );
+        else child.update(child.value);
+      }
+  }
+  private tapeSticky(id: string) {
+    const parent = this.cb.read().drawings.find((d) => d.id === id);
+    if (!parent) return;
+    const tape = tapeOnSticky(
+      {
+        ...(this.options.get("tape") ??
+          this.cb.getDefaults().tape ??
+          defaultStyle("tape")),
+        id: crypto.randomUUID(),
+        kind: "tape",
+        x: 0,
+        y: 0,
+        width: Math.min(140, parent.width * 0.65),
+        height: 32,
+        rotationOffset: -8,
+      },
+      parent,
+    );
+    this.commit([...this.cb.read().drawings, tape]);
+    this.selection.select(this.shapes.get(tape.id) ?? null);
+  }
+  private duplicate(id: string) {
+    const old = this.cb.read().drawings.find((d) => d.id === id);
+    if (!old) return;
+    const next = {
+      ...old,
+      id: crypto.randomUUID(),
+      x: limit(old.x + 32, 0, 50000),
+      y: limit(old.y + 32, 0, 50000),
+      parentId: undefined,
+    };
+    this.commit([...this.cb.read().drawings, next]);
+    this.selection.select(this.shapes.get(next.id) ?? null);
+  }
   remove(id: string) {
-    this.commit(this.cb.read().drawings.filter((d) => d.id !== id));
+    this.commit(
+      this.cb.read().drawings.filter((d) => d.id !== id && d.parentId !== id),
+    );
     this.dock
       .querySelector<HTMLButtonElement>("[data-tool=select]")
       ?.focus({ preventScroll: true });
@@ -447,24 +724,65 @@ export class DesignTools {
     this.tray.hidden = true;
     const mode = this.mode;
     const settings = { ...this.settings() };
-    if (["sticky", "label", "sticker"].includes(mode)) {
+    if (
+      [
+        "sticky",
+        "label",
+        "sticker",
+        "tape",
+        "icon",
+        "text",
+        "section",
+        "table",
+        "code",
+      ].includes(mode)
+    ) {
       const [x, y] = this.point(event);
       const value: Drawing = {
         id: crypto.randomUUID(),
         kind: mode as DrawingKind,
         x,
         y,
-        width: mode === "sticker" ? 80 : mode === "label" ? 180 : 240,
-        height: mode === "sticker" ? 80 : mode === "label" ? 64 : 200,
+        width: ["sticker", "icon"].includes(mode)
+          ? 80
+          : mode === "tape"
+            ? 160
+            : ["section", "table", "code"].includes(mode)
+              ? 400
+              : mode === "label"
+                ? 180
+                : 240,
+        height: ["sticker", "icon"].includes(mode)
+          ? 80
+          : mode === "tape"
+            ? 36
+            : mode === "label" || mode === "text"
+              ? 64
+              : 200,
         ...settings,
         text:
-          mode === "sticky" ? "Your idea…" : mode === "label" ? "Label" : "",
+          mode === "sticky"
+            ? "Your idea…"
+            : mode === "label"
+              ? "Label"
+              : mode === "text"
+                ? "Text"
+                : mode === "section"
+                  ? "Section"
+                  : mode === "table"
+                    ? "First cell\tSecond cell\nThird cell\tFourth cell"
+                    : mode === "code"
+                      ? 'const idea = "space to think";'
+                      : "",
       };
       this.commit([...this.cb.read().drawings, value]);
       this.setMode("select");
       const object = this.shapes.get(value.id);
       this.selection.select(object ?? null);
-      if (mode !== "sticker") object?.editText();
+      if (
+        ["sticky", "label", "text", "section", "table", "code"].includes(mode)
+      )
+        object?.editText();
       return;
     }
     const kind: DrawingKind =
@@ -547,6 +865,7 @@ export class DesignTools {
     this.shapes.forEach((o) => o.destroy());
     this.shapes.clear();
     this.catcher.remove();
+    this.view.scrollDOM.classList.remove("cv-dot-grid");
     this.dock.remove();
     this.view.dom.classList.remove("cv-design-editor");
   }
@@ -557,6 +876,9 @@ class DrawingObject implements Selectable {
   id: string;
   private visual: HTMLElement;
   private editing = false;
+  private frame: HTMLElement;
+  private updateGrip: () => void;
+  private cancelRotate: () => void;
   private input: HTMLTextAreaElement | null = null;
   private cancelGesture: (() => void) | null = null;
   constructor(
@@ -567,6 +889,10 @@ class DrawingObject implements Selectable {
     private change: (d: Drawing) => void,
     public remove: () => void,
     private recover: (text: string) => void,
+    private imageURL: (path: string) => string,
+    private duplicate: () => void,
+    private addTape: () => void,
+    private children: (p: Placement | null) => void,
   ) {
     this.id = value.id;
     this.root = document.createElement("div");
@@ -586,7 +912,20 @@ class DrawingObject implements Selectable {
     );
     grip.onpointerdown = (e) => this.gesture(e);
     grip.onkeydown = (e) => this.key(e);
-    if (!["sticky", "label", "sticker"].includes(value.kind)) {
+    if (
+      ![
+        "sticky",
+        "label",
+        "sticker",
+        "image",
+        "icon",
+        "text",
+        "section",
+        "tape",
+        "table",
+        "code",
+      ].includes(value.kind)
+    ) {
       iconButton(this.toolbar, "palette", "Drawing color", () =>
         this.properties("color"),
       );
@@ -594,7 +933,11 @@ class DrawingObject implements Selectable {
         this.properties("width"),
       );
     }
-    if (["sticky", "label"].includes(value.kind))
+    if (
+      ["sticky", "label", "text", "section", "table", "code"].includes(
+        value.kind,
+      )
+    )
       iconButton(this.toolbar, "pencil", "Edit annotation text", () =>
         this.editText(),
       );
@@ -605,11 +948,37 @@ class DrawingObject implements Selectable {
       this.remove(),
     );
     del.classList.add("cv-danger");
+    if (value.kind === "sticky")
+      iconButton(this.toolbar, "tape", "Add tape to sticky", () =>
+        this.addTape(),
+      );
+    iconButton(this.toolbar, "copy", "Duplicate object", () =>
+      this.duplicate(),
+    );
+    this.frame = document.createElement("div");
+    this.frame.className = "cv-rotated-frame";
+    this.root.append(this.frame);
+    this.updateGrip = leftGrip(
+      this.root,
+      () => this.value,
+      (e) => this.gesture(e),
+      (e) => this.key(e),
+    );
+    this.cancelRotate = rotationHandle(
+      this.root,
+      this.frame,
+      () => this.value,
+      (n) => {
+        this.change({ ...this.value, rotation: n });
+        this.selection.position();
+      },
+      (p) => this.children(p),
+    );
     this.visual = document.createElement("div");
     this.visual.className = "cv-drawing-visual";
-    this.root.append(this.visual);
+    this.frame.append(this.visual);
     addHandles(
-      this.root,
+      this.frame,
       (e, h) => this.gesture(e, h),
       (e, h) => this.key(e, h),
     );
@@ -635,7 +1004,18 @@ class DrawingObject implements Selectable {
     this.root.addEventListener("pointerdown", (e) => e.stopPropagation());
     this.update(value);
   }
+  previewPlacement(p: Placement) {
+    Object.assign(this.root.style, {
+      left: p.x + "px",
+      top: p.y + "px",
+      width: p.width + "px",
+      height: p.height + "px",
+    });
+    this.frame.style.rotate = (p.rotation ?? 0) + "deg";
+  }
   position = () => this.value;
+  bounds = () => rotatedBounds(this.value);
+  openSettings = () => this.properties("all");
   private select() {
     this.selection.select(this);
     this.root.focus({ preventScroll: true });
@@ -649,6 +1029,9 @@ class DrawingObject implements Selectable {
       width: value.width + "px",
       height: value.height + "px",
     });
+    this.root.style.zIndex = value.parentId ? "9" : "";
+    this.frame.style.rotate = (value.rotation ?? 0) + "deg";
+    this.updateGrip();
     // Changes to geometry do not replace an in-progress text editor.
     if (!this.editing && (!this.visual.firstChild || old !== value))
       this.render();
@@ -656,18 +1039,76 @@ class DrawingObject implements Selectable {
   private render() {
     const d = this.value;
     this.root.dataset.kind = d.kind;
-    if (d.kind === "sticky" || d.kind === "label") {
+    if (d.kind === "table") {
+      const table = document.createElement("table");
+      table.className = "cv-annotation-table";
+      for (const line of (d.text ?? "").split("\n").slice(0, 16)) {
+        const row = table.insertRow();
+        for (const cell of line.split("\t").slice(0, 16)) {
+          const td = row.insertCell();
+          td.textContent = cell;
+          td.dir = "auto";
+        }
+      }
+      Object.assign(table.style, {
+        fontSize: (d.fontSize ?? 18) + "px",
+        color: d.stroke,
+        background:
+          d.fill && d.fill !== "none" ? d.fill : "var(--background-primary)",
+        opacity: String(d.opacity),
+      });
+      this.visual.replaceChildren(table);
+    } else if (d.kind === "code") {
+      const pre = document.createElement("pre");
+      pre.className = "cv-code-annotation";
+      pre.textContent = d.text ?? "";
+      Object.assign(pre.style, {
+        fontSize: (d.fontSize ?? 16) + "px",
+        color: d.stroke,
+        background:
+          d.fill && d.fill !== "none" ? d.fill : "var(--background-secondary)",
+        opacity: String(d.opacity),
+      });
+      this.visual.replaceChildren(pre);
+    } else if (["sticky", "label", "text", "section"].includes(d.kind)) {
       const text = document.createElement("div");
       text.className = "cv-annotation-text";
       text.dir = "auto";
       text.textContent = d.text ?? "";
       Object.assign(text.style, {
-        background: d.fill && d.fill !== "none" ? d.fill : "#FFF0AD",
-        color: d.stroke === "currentColor" ? "#2C2C2B" : d.stroke,
+        background:
+          d.fill && d.fill !== "none"
+            ? d.fill
+            : ["text", "section"].includes(d.kind)
+              ? "transparent"
+              : "#FFF0AD",
+        color:
+          d.stroke === "currentColor"
+            ? ["text", "section"].includes(d.kind)
+              ? "var(--text-normal)"
+              : "#2C2C2B"
+            : d.stroke,
         fontSize: (d.fontSize ?? 18) + "px",
         opacity: String(d.opacity),
       });
       this.visual.replaceChildren(text);
+    } else if (d.kind === "image") {
+      const img = document.createElement("img");
+      img.alt = d.text || "Imported image";
+      img.draggable = false;
+      const url = d.assetPath ? this.imageURL(d.assetPath) : "";
+      if (url) img.src = url;
+      else img.alt = "Image file missing from vault";
+      img.style.opacity = String(d.opacity);
+      this.visual.replaceChildren(img);
+    } else if (d.kind === "icon") {
+      const el = document.createElement("div");
+      el.className = "cv-placed-icon";
+      el.style.color = d.stroke;
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", d.iconId ?? "star");
+      setIcon(el, d.iconId ?? "star");
+      this.visual.replaceChildren(el);
     } else if (d.kind === "sticker") {
       const stamp = STICKERS.find((s) => s.id === d.sticker) ?? STICKERS[0];
       const el = document.createElement("div");
@@ -680,7 +1121,13 @@ class DrawingObject implements Selectable {
     } else this.visual.replaceChildren(drawingSVG(d));
   }
   editText() {
-    if (this.editing || !["sticky", "label"].includes(this.value.kind)) return;
+    if (
+      this.editing ||
+      !["sticky", "label", "text", "section", "table", "code"].includes(
+        this.value.kind,
+      )
+    )
+      return;
     this.select();
     this.editing = true;
     this.root.classList.add("is-editing");
@@ -750,6 +1197,10 @@ class DrawingObject implements Selectable {
     this.toolbar.append(menu);
     if (type === "all") {
       menu.classList.add("cv-full-properties");
+      rotationField(menu, this.value.rotation ?? 0, (n) => {
+        this.change({ ...this.value, rotation: n });
+        this.selection.position();
+      });
       stylePanel(menu, this.value.kind, drawingStyle(this.value), (patch) =>
         this.change({ ...this.value, ...patch }),
       );
@@ -817,9 +1268,11 @@ class DrawingObject implements Selectable {
       root: this.root,
       start,
       explicitHeight: true,
+      preview: (p) => this.children(p),
+      finishPreview: () => this.children(null),
       project: (dx, dy) =>
         h
-          ? resized(start, dx, dy, h)
+          ? rotatedResize(start, dx, dy, h)
           : {
               ...start,
               x: limit(start.x + dx, 0, 50000),
@@ -858,7 +1311,7 @@ class DrawingObject implements Selectable {
     this.change({
       ...this.value,
       ...(h
-        ? resized(this.value, dx, dy, h)
+        ? rotatedResize(this.value, dx, dy, h)
         : {
             x: limit(this.value.x + dx, 0, 50000),
             y: limit(this.value.y + dy, 0, 50000),
@@ -867,6 +1320,7 @@ class DrawingObject implements Selectable {
     this.selection.position();
   }
   destroy() {
+    this.cancelRotate();
     if (this.editing && this.input && this.input.value !== this.value.text)
       this.recover(this.input.value);
     this.cancelGesture?.();

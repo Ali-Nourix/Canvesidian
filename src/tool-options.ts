@@ -1,5 +1,6 @@
 import { Drawing, STICKERS, ToolStyle } from "./model";
 import { iconButton } from "./interaction";
+import { iconPicker } from "./icon-picker";
 export type { ToolStyle } from "./model";
 export const COLORS = [
   "currentColor",
@@ -22,10 +23,18 @@ export function defaultStyle(mode: string): ToolStyle {
   return {
     stroke: "currentColor",
     strokeWidth: mode === "highlighter" ? 24 : 2,
-    opacity: mode === "highlighter" ? 0.35 : 1,
-    fill: mode === "sticky" ? PAPERS[0] : mode === "label" ? PAPERS[1] : "none",
+    opacity: mode === "highlighter" ? 0.35 : mode === "tape" ? 0.45 : 1,
+    fill:
+      mode === "tape"
+        ? "#D5803B"
+        : mode === "sticky"
+          ? PAPERS[0]
+          : mode === "label"
+            ? PAPERS[1]
+            : "none",
     fontSize: 18,
     sticker: "star",
+    iconId: "star",
     ...(mode === "highlighter" ? { stroke: "#EAC26B" } : {}),
   };
 }
@@ -41,7 +50,14 @@ export function stylePanel(
   panel.setAttribute("role", "group");
   panel.setAttribute("aria-label", "Appearance settings");
   parent.append(panel);
-  const textKind = kind === "sticky" || kind === "label";
+  const textKind = [
+    "sticky",
+    "label",
+    "text",
+    "section",
+    "table",
+    "code",
+  ].includes(kind);
   const row = (label: string) => {
     const wrap = document.createElement("div");
     wrap.className = "cv-option-row";
@@ -129,7 +145,15 @@ export function stylePanel(
     };
     wrap.append(input, output);
   };
-  if (kind === "sticker") {
+  if (kind === "icon") {
+    iconPicker(panel, value.iconId ?? "star", (iconId) => change({ iconId }));
+    swatches("Icon color", COLORS, "stroke");
+  } else if (kind === "image") {
+    number("Opacity", "opacity", 0.1, 1, 0.05);
+  } else if (kind === "tape") {
+    swatches("Tape color", ["#D5803B", ...PAPERS], "fill");
+    number("Opacity", "opacity", 0.1, 1, 0.05);
+  } else if (kind === "sticker") {
     const stamps = row("Sticker");
     const grid = document.createElement("div");
     grid.className = "cv-sticker-grid";
@@ -147,7 +171,7 @@ export function stylePanel(
     }
   } else {
     swatches(textKind ? "Text color" : "Stroke color", COLORS, "stroke");
-    if (textKind || ["rect", "ellipse", "diamond"].includes(kind))
+    if (textKind || ["rect", "ellipse", "diamond", "triangle"].includes(kind))
       swatches("Fill", textKind ? PAPERS : ["none", ...PAPERS], "fill");
     if (textKind) number("Font size", "fontSize", 12, 48, 1);
     else number("Size", "strokeWidth", 1, 32, 1);

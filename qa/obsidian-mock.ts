@@ -33,6 +33,9 @@ export class Plugin {
   registerEditorExtension(extension: any) {
     (window as any).extension = extension;
   }
+  addSettingTab(tab: any) {
+    (window as any).settingTab = tab;
+  }
   addCommand(command: any) {
     (window as any).commands.push(command);
   }
@@ -70,6 +73,7 @@ export class Modal {
   contentEl = document.createElement("div");
   containerEl = document.createElement("div");
   constructor(_app: any) {
+    (window as any).currentModal = this;
     this.containerEl.className = "test-modal-backdrop";
     this.containerEl.append(this.titleEl, this.contentEl);
   }
@@ -98,6 +102,21 @@ export function setIcon(el: HTMLElement, name: string) {
       "M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z",
     circle: "M21 12a9 9 0 1 1-18 0 9 9 0 1 1 18 0",
     minus: "M5 12h14",
+    shapes: "M3 3h7v7H3Z M21 17a4 4 0 1 1-8 0 4 4 0 1 1 8 0 M15 3l6 7H9Z",
+    tape: "M3 6l2-1-1 3 2 3-2 3 1 4 16-1-2-3 2-4-1-3Z",
+    triangle: "m12 3 10 18H2Z",
+    type: "M4 4h16 M12 4v16 M8 20h8",
+    group: "M3 8V3h5 M16 3h5v5 M21 16v5h-5 M8 21H3v-5",
+    table: "M3 3h18v18H3Z M3 9h18 M3 15h18 M9 3v18 M15 3v18",
+    code: "m8 6-6 6 6 6 M16 6l6 6-6 6",
+    copy: "M9 9h12v12H9Z M15 5V3H3v12h2",
+    settings:
+      "M12 8a4 4 0 1 1 0 8 4 4 0 1 1 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M19 5l-2 2 M7 17l-2 2",
+    "image-plus": "M21 11V3H3v18h12 M3 17l6-6 7 7 M17 18h6 M20 15v6 M7 7h.01",
+    "wand-sparkles": "m3 21 13-13 3 3L6 24Z M13 3v4 M11 5h4 M21 1v4 M19 3h4",
+    "rotate-cw": "M21 4v6h-6 M21 10a9 9 0 1 0-2 8",
+    search: "M10 3a7 7 0 1 1 0 14 7 7 0 1 1 0-14 M15 15l6 6",
+
     diamond: "m12 3 9 9-9 9-9-9Z",
     "arrow-up-right": "M7 17 17 7 M7 7h10v10",
     "sticky-note":
@@ -135,4 +154,91 @@ export function setIcon(el: HTMLElement, name: string) {
   path.setAttribute("d", paths[name] ?? "M5 12h14");
   svg.append(path);
   el.replaceChildren(svg);
+}
+
+export function getIconIds() {
+  return [
+    "star",
+    "heart",
+    "search",
+    "circle",
+    "square",
+    "flame",
+    "lightbulb",
+    "thumbs-up",
+    "sparkles",
+    "arrow-up-right",
+    "settings",
+  ];
+}
+export class PluginSettingTab {
+  containerEl = document.createElement("div");
+  constructor(_app: any, _plugin: any) {}
+}
+export class Setting {
+  settingEl: HTMLElement;
+  private controls: HTMLElement;
+  constructor(parent: HTMLElement) {
+    this.settingEl = document.createElement("div");
+    this.settingEl.className = "setting-item";
+    this.controls = document.createElement("div");
+    parent.append(this.settingEl);
+    this.settingEl.append(this.controls);
+  }
+  setName(name: string) {
+    this.settingEl.setAttribute("data-name", name);
+    const label = document.createElement("label");
+    label.textContent = name;
+    this.settingEl.prepend(label);
+    return this;
+  }
+  setDesc(text: string) {
+    const p = document.createElement("p");
+    p.textContent = text;
+    this.settingEl.append(p);
+    return this;
+  }
+  addToggle(cb: any) {
+    const el = document.createElement("input");
+    el.type = "checkbox";
+    el.setAttribute("aria-label", this.settingEl.dataset.name!);
+    this.controls.append(el);
+    const component = {
+      setValue: (v: boolean) => {
+        el.checked = v;
+        return component;
+      },
+      onChange: (fn: any) => {
+        el.onchange = () => fn(el.checked);
+        return component;
+      },
+    };
+    cb(component);
+    return this;
+  }
+  addSlider(cb: any) {
+    const el = document.createElement("input");
+    el.type = "range";
+    el.setAttribute("aria-label", this.settingEl.dataset.name!);
+    this.controls.append(el);
+    const c = {
+      setLimits: (a: number, b: number, step: number) => {
+        el.min = String(a);
+        el.max = String(b);
+        el.step = String(step);
+        return c;
+      },
+      setValue: (v: number) => {
+        el.value = String(v);
+        return c;
+      },
+      setDynamicTooltip: () => c,
+      onChange: (fn: any) => {
+        el.onchange = () => fn(Number(el.value));
+        return c;
+      },
+    };
+    cb(c);
+    return this;
+  }
 }

@@ -11,6 +11,7 @@ export interface Placement {
   y: number;
   width: number;
   height: number;
+  rotation?: number;
 }
 export interface Pin extends Placement {
   id: string;
@@ -34,9 +35,10 @@ export interface RecoveryDraft {
   savedAt: string;
 }
 export interface InlineStore {
-  version: 4;
+  version: 5;
   recoveryDrafts?: RecoveryDraft[];
   toolDefaults?: Record<string, ToolStyle>;
+  settings?: PluginPreferences;
   notes: Record<string, SavedNote>;
   legacyBoards?: unknown;
 }
@@ -121,17 +123,23 @@ export function restore(
   return { pins, detached };
 }
 export function normalize(raw: unknown): InlineStore {
-  const result: InlineStore = { version: 4, notes: {} };
+  const result: InlineStore = { version: 5, notes: {} };
   if (!raw || typeof raw !== "object") return result;
   const object = raw as any;
   if (object.version === 1) {
     result.legacyBoards = object.boards;
     return result;
   }
-  if (object.version !== 2 && object.version !== 3 && object.version !== 4)
+  if (
+    object.version !== 2 &&
+    object.version !== 3 &&
+    object.version !== 4 &&
+    object.version !== 5
+  )
     throw new Error(
       "Unsupported Canvesidian data version. Existing layout data was not overwritten.",
     );
+  result.settings = normalizePreferences(object.settings);
   if (object.legacyBoards) result.legacyBoards = object.legacyBoards;
   result.toolDefaults = {};
   for (const [mode, v] of Object.entries(object.toolDefaults ?? {}) as [
@@ -150,6 +158,13 @@ export function normalize(raw: unknown): InlineStore {
         "sticky",
         "label",
         "sticker",
+        "tape",
+        "icon",
+        "text",
+        "section",
+        "triangle",
+        "table",
+        "code",
       ].includes(mode) ||
       !v
     )
@@ -160,6 +175,10 @@ export function normalize(raw: unknown): InlineStore {
     )
       continue;
     result.toolDefaults[mode] = {
+      iconId:
+        typeof v.iconId === "string" && /^[a-z0-9-]{1,100}$/.test(v.iconId)
+          ? v.iconId
+          : "star",
       stroke: v.stroke,
       strokeWidth: limit(v.strokeWidth, 1, 32),
       opacity: limit(v.opacity, 0.1, 1),
@@ -201,6 +220,7 @@ export function normalize(raw: unknown): InlineStore {
         )
         .map((p: SavedPin) => ({
           ...p,
+          rotation: normalizeAngle(p.rotation),
           x: limit(p.x, 0, 50000),
           y: limit(p.y, 0, 50000),
           width: limit(p.width, 200, 1200),
@@ -220,7 +240,15 @@ export type DrawingKind =
   | "arrow"
   | "sticky"
   | "label"
-  | "sticker";
+  | "sticker"
+  | "tape"
+  | "image"
+  | "icon"
+  | "triangle"
+  | "text"
+  | "section"
+  | "table"
+  | "code";
 export interface Drawing extends Placement {
   id: string;
   kind: DrawingKind;
@@ -232,6 +260,10 @@ export interface Drawing extends Placement {
   text?: string;
   fontSize?: number;
   sticker?: string;
+  assetPath?: string;
+  parentId?: string;
+  rotationOffset?: number;
+  iconId?: string;
 }
 export const validStroke = (s: unknown): s is string =>
   s === "currentColor" || (typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s));
@@ -255,6 +287,14 @@ export function normalizeDrawings(raw: unknown): Drawing[] {
           "sticky",
           "label",
           "sticker",
+          "tape",
+          "image",
+          "icon",
+          "triangle",
+          "text",
+          "section",
+          "table",
+          "code",
         ].includes(d.kind) &&
         [d.x, d.y, d.width, d.height, d.strokeWidth, d.opacity].every(
           Number.isFinite,
@@ -264,6 +304,17 @@ export function normalizeDrawings(raw: unknown): Drawing[] {
     )
     .map((d) => ({
       ...d,
+      rotation: normalizeAngle(d.rotation),
+      parentId:
+        d.kind === "tape" && typeof d.parentId === "string"
+          ? d.parentId
+          : undefined,
+      rotationOffset: normalizeAngle(d.rotationOffset),
+      assetPath: safeAssetPath(d.assetPath) ? d.assetPath : undefined,
+      iconId:
+        typeof d.iconId === "string" && /^[a-z0-9-]{1,100}$/.test(d.iconId)
+          ? d.iconId
+          : "star",
       text: typeof d.text === "string" ? d.text.slice(0, 10000) : "",
       fontSize: Number.isFinite(d.fontSize) ? limit(d.fontSize, 12, 72) : 18,
       fill: d.fill === "none" || validStroke(d.fill) ? d.fill : "none",
@@ -361,4 +412,89 @@ export interface ToolStyle {
   fill: string;
   fontSize: number;
   sticker: string;
+  iconId?: string;
+}
+
+export interface PluginPreferences {
+  dotGrid: boolean;
+  gridSpacing: number;
+  gridOpacity: number;
+}
+export const normalizePreferences = (raw: any): PluginPreferences => ({
+  dotGrid: raw?.dotGrid === true,
+  gridSpacing: Number.isFinite(raw?.gridSpacing)
+    ? limit(raw.gridSpacing, 12, 64)
+    : 24,
+  gridOpacity: Number.isFinite(raw?.gridOpacity)
+    ? limit(raw.gridOpacity, 0.05, 0.4)
+    : 0.15,
+});
+export const normalizeAngle = (n: unknown) =>
+  typeof n === "number" && Number.isFinite(n)
+    ? (((n % 360) + 540) % 360) - 180
+    : 0;
+export const safeAssetPath = (p: unknown): p is string =>
+  typeof p === "string" &&
+  !!p &&
+  !p.startsWith("/") &&
+  !p.includes("\\") &&
+  !p.split("/").some((s) => s === ".." || s === ".") &&
+  !/[:\x00-\x1f]/.test(p);
+export function rotatedBounds(p: Placement): Placement {
+  const a = ((p.rotation ?? 0) * Math.PI) / 180,
+    c = Math.abs(Math.cos(a)),
+    s = Math.abs(Math.sin(a));
+  const width = p.width * c + p.height * s,
+    height = p.width * s + p.height * c;
+  return {
+    ...p,
+    x: p.x + (p.width - width) / 2,
+    y: p.y + (p.height - height) / 2,
+    width,
+    height,
+  };
+}
+export function rotatedResize(
+  p: Placement,
+  dx: number,
+  dy: number,
+  h: Handle,
+  minWidth = 24,
+  minHeight = 24,
+): Placement {
+  const a = ((p.rotation ?? 0) * Math.PI) / 180,
+    c = Math.cos(a),
+    s = Math.sin(a);
+  const next = resized(
+    p,
+    dx * c + dy * s,
+    -dx * s + dy * c,
+    h,
+    minWidth,
+    minHeight,
+  );
+  const cx = next.x + next.width / 2 - (p.x + p.width / 2),
+    cy = next.y + next.height / 2 - (p.y + p.height / 2);
+  return {
+    ...next,
+    rotation: p.rotation,
+    x: Math.max(0, p.x + p.width / 2 + cx * c - cy * s - next.width / 2),
+    y: Math.max(0, p.y + p.height / 2 + cx * s + cy * c - next.height / 2),
+  };
+}
+
+/** Decorative tape is anchored at its sticky's top edge, in the parent's rotated space. */
+export function tapeOnSticky(tape: Drawing, parent: Drawing): Drawing {
+  const a = ((parent.rotation ?? 0) * Math.PI) / 180,
+    cx = parent.x + parent.width / 2,
+    cy = parent.y + parent.height / 2;
+  return {
+    ...tape,
+    parentId: parent.id,
+    x: cx + (Math.sin(a) * parent.height) / 2 - tape.width / 2,
+    y: cy - (Math.cos(a) * parent.height) / 2 - tape.height / 2,
+    rotation: normalizeAngle(
+      (parent.rotation ?? 0) + (tape.rotationOffset ?? -8),
+    ),
+  };
 }

@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { clickTool } from "./tool-helpers.mjs";
 import assert from "node:assert/strict";
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH,
@@ -45,7 +46,9 @@ try {
     .locator(".cv-floating-body")
     .click({ position: { x: 24, y: 12 } });
   assert.equal(
-    await block.evaluate((el) => getComputedStyle(el).outlineColor),
+    await block
+      .locator(".cv-rotated-frame")
+      .evaluate((el) => getComputedStyle(el).outlineColor),
     "rgb(39, 131, 222)",
   );
   console.log(
@@ -103,9 +106,9 @@ try {
     "PASS: confirmed per-block deletion removes source text; cancel preserves it and native undo restores it",
   );
   const draw = async (label, from, to, steps = 12) => {
-    await page.getByRole("button", { name: label, exact: true }).click();
+    await clickTool(page, label);
     if (await page.locator(".cv-tool-tray").isVisible())
-      await page.getByRole("button", { name: label, exact: true }).click();
+      await clickTool(page, label);
     await page.mouse.move(...from);
     await page.mouse.down();
     await page.mouse.move(...to, { steps });
@@ -119,13 +122,9 @@ try {
   console.log(
     "PASS: rectangle creation stays in the existing note and never changes Markdown",
   );
-  await page
-    .getByRole("button", { name: "Select objects", exact: true })
-    .click();
+  await clickTool(page, "Select objects");
   let drawing = page.locator(".cv-drawing-object.is-selected");
-  await page
-    .getByRole("button", { name: "Drawing color", exact: true })
-    .click();
+  await clickTool(page, "Drawing color");
   await page
     .getByRole("button", { name: "Stroke #2783DE", exact: true })
     .click();
@@ -158,12 +157,8 @@ try {
   console.log(
     "PASS: ellipse and line tools create independent selectable objects",
   );
-  await page
-    .getByRole("button", { name: "Draw with pen", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Draw with pen", exact: true })
-    .click();
+  await clickTool(page, "Draw with pen");
+  await clickTool(page, "Draw with pen");
   await page.mouse.move(820, 690);
   await page.mouse.down();
   await page.evaluate(() => (window.transactionCount = 0));
@@ -190,9 +185,7 @@ try {
     ),
   );
   console.log("PASS: highlighter is a distinct translucent brush preset");
-  await page
-    .getByRole("button", { name: "Select objects", exact: true })
-    .click();
+  await clickTool(page, "Select objects");
   await page
     .getByRole("button", { name: "Delete this drawing", exact: true })
     .click();
@@ -246,9 +239,7 @@ try {
   await page.evaluate(() => window.floatText("Move this paragraph"));
   await draw("Draw rectangle", [800, 350], [1120, 480]);
   await draw("Draw ellipse", [850, 570], [1070, 690]);
-  await page
-    .getByRole("button", { name: "Select objects", exact: true })
-    .click();
+  await clickTool(page, "Select objects");
   await page.screenshot({ path: "qa/design-desktop.png" });
   await page.evaluate(() => {
     document.documentElement.classList.add("theme-dark");
@@ -269,9 +260,7 @@ try {
     document.documentElement.classList.remove("theme-dark");
     document.documentElement.removeAttribute("style");
   });
-  await page
-    .getByRole("button", { name: "Drawing color", exact: true })
-    .click();
+  await clickTool(page, "Drawing color");
   await page.screenshot({ path: "qa/design-properties.png" });
   await page
     .getByRole("button", { name: "Stroke #2783DE", exact: true })
@@ -304,19 +293,13 @@ try {
   await touch.goto(new URL("./harness.html", import.meta.url).href);
   await touch.waitForFunction(() => window.ready);
   assert.ok(await touch.evaluate(() => matchMedia("(pointer:coarse)").matches));
-  await touch
-    .getByRole("button", { name: "Draw ellipse", exact: true })
-    .click();
-  await touch
-    .getByRole("button", { name: "Draw ellipse", exact: true })
-    .click();
+  await clickTool(touch, "Draw ellipse");
+  await clickTool(touch, "Draw ellipse");
   await touch.mouse.move(80, 540);
   await touch.mouse.down();
   await touch.mouse.move(290, 650, { steps: 16 });
   await touch.mouse.up();
-  await touch
-    .getByRole("button", { name: "Select objects", exact: true })
-    .click();
+  await clickTool(touch, "Select objects");
   const selected = touch.locator(".cv-drawing-object.is-selected");
   const bounds = await selected.boundingBox();
   const toolBounds = await selected
