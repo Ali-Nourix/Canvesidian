@@ -1,8 +1,8 @@
 {
   "name": "canvesidian",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "A spatial Markdown workspace for Obsidian",
+  "description": "Float existing Markdown blocks inside the same Obsidian note",
   "scripts": {
     "build": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
@@ -11,6 +11,10 @@
     "check": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@lezer/markdown": "^1.8.0",
     "@types/node": "^24.0.0",
     "esbuild": "^0.25.0",
     "obsidian": "1.14.4",

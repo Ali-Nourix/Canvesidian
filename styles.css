@@ -1,166 +1,163 @@
-.cv-view {
-  display: flex;
-  flex-direction: column;
-  padding: 0 !important;
-  overflow: hidden;
+/* Only the existing Markdown editor is extended. No custom workspace view. */
+.cv-spatial-scroller {
+  position: relative !important;
 }
-.cv-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  flex-wrap: wrap;
-}
-.cv-toolbar strong {
-  margin-inline-end: 8px;
-}
-.cv-muted,
-.cv-hint {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-.cv-hint {
-  padding: 8px 16px;
-}
-.cv-warning {
-  padding: 8px 16px;
-  background: var(--background-secondary);
-  color: var(--text-normal);
-}
-.cv-surface {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  position: relative;
-  isolation: isolate;
-  background-color: var(--background-secondary);
-  background-image: radial-gradient(
-    var(--background-modifier-border) 1px,
-    transparent 1px
-  );
-  background-size: 24px 24px;
-  overscroll-behavior: contain;
-}
-.cv-world {
-  position: relative;
-  min-width: 100%;
-  min-height: 100%;
-}
-.cv-card {
+.cv-spatial-layer {
   position: absolute;
-  min-width: 240px;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
-  box-shadow: 0 2px 8px #0000000a;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 4;
 }
-.cv-card:focus-within {
-  z-index: 5;
-  border-color: var(--interactive-accent);
+.cv-spatial-layer[hidden] {
+  display: none;
 }
-.cv-card-bar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  min-height: 44px;
-}
-.cv-card-title {
-  flex: 1;
+.cv-source-placeholder {
+  display: block;
+  height: 0 !important;
+  min-height: 0 !important;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-muted);
 }
-.cv-card button,
-.cv-attachment button {
-  box-shadow: none;
-  min-width: 32px;
-  min-height: 32px;
-  padding: 4px 8px;
+.cv-space {
+  pointer-events: none;
+  user-select: none;
 }
-.cv-grip {
+.cv-float-handle {
+  position: absolute;
+  pointer-events: auto;
   cursor: grab;
   touch-action: none;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 2px 6px !important;
+  z-index: 6;
 }
-.cv-grip:active {
+.cv-floating-block {
+  position: absolute;
+  pointer-events: auto;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  min-width: 200px;
+  box-sizing: border-box;
+}
+.cv-floating-block:hover,
+.cv-floating-block:focus-within {
+  border-color: var(--background-modifier-border);
+  box-shadow: 0 2px 8px #0000000d;
+  z-index: 5;
+}
+.cv-floating-toolbar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.cv-floating-block:hover .cv-floating-toolbar,
+.cv-floating-block:focus-within .cv-floating-toolbar {
+  opacity: 1;
+}
+.cv-floating-toolbar button,
+.cv-block-resize {
+  box-shadow: none;
+  font-size: 12px;
+  min-height: 28px;
+  padding: 2px 8px;
+}
+.cv-block-grip {
+  cursor: grab;
+  touch-action: none;
+  margin-inline-end: auto;
+}
+.cv-block-grip:active {
   cursor: grabbing;
 }
-.cv-markdown {
-  padding: 16px 20px 32px;
+.cv-floating-body {
+  padding: 8px 16px 24px;
   overflow-wrap: anywhere;
-  min-height: 100px;
+  line-height: 1.6;
+  user-select: text;
 }
-.cv-markdown > :first-child {
+.cv-floating-body > :first-child {
   margin-top: 0;
 }
-.cv-markdown img {
-  max-width: 100%;
+.cv-floating-body > :last-child {
+  margin-bottom: 0;
 }
-.cv-markdown pre,
-.cv-markdown table {
+.cv-floating-body img {
+  max-width: 100%;
+  height: auto;
+}
+.cv-floating-body pre {
   max-width: 100%;
   overflow: auto;
 }
-.cv-resize {
+.cv-floating-body table {
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+}
+.cv-block-resize {
   position: absolute;
   bottom: 0;
   right: 0;
   cursor: ew-resize;
   touch-action: none;
+  opacity: 0;
 }
-.cv-attachment {
-  position: absolute;
-  z-index: 2;
-  max-width: 260px;
-  min-width: 116px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-secondary);
-  box-shadow: 0 2px 6px #00000012;
+.cv-floating-block:hover .cv-block-resize,
+.cv-floating-block:focus-within .cv-block-resize {
+  opacity: 1;
 }
-.cv-attachment-bar {
-  display: flex;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-.cv-attachment-text {
-  padding: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 15px;
-  color: var(--text-normal);
-}
-.cv-sticker .cv-attachment-text {
-  font-size: 36px;
-  text-align: center;
-}
-.cv-dialog-input {
+.cv-inline-input {
+  display: block;
   width: 100%;
-  min-height: 260px;
-  resize: vertical;
-  font-family: var(--font-monospace);
-  margin-bottom: 12px;
+  min-height: 88px;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  font: inherit;
+  line-height: 1.6;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  padding: 8px;
 }
-.cv-error {
-  color: var(--text-error);
+.cv-done {
+  margin-top: 8px;
 }
-.cv-view button:focus-visible {
+.cv-floating-block button:focus-visible,
+.cv-float-handle:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
 @media (pointer: coarse) {
-  .cv-card button,
-  .cv-attachment button {
+  .cv-floating-toolbar button,
+  .cv-block-resize,
+  .cv-float-handle {
     min-width: 44px;
     min-height: 44px;
   }
+  .cv-floating-toolbar {
+    opacity: 1;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cv-view * {
-    scroll-behavior: auto !important;
+  .cv-floating-toolbar {
+    transition: none;
   }
+}
+
+.cv-draft-warning {
+  color: var(--text-error);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 8px;
 }
