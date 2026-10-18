@@ -1,15 +1,15 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/Obsidian-Plugin-7C3AED?style=for-the-badge&logo=obsidian&logoColor=white" alt="Obsidian Plugin">
-  <img src="https://img.shields.io/badge/Version-0.5.0-5B6DCD?style=for-the-badge" alt="Version 0.5.0">
-  <img src="https://img.shields.io/badge/Status-Experimental-E09F3E?style=for-the-badge" alt="Experimental">
-  <img src="https://img.shields.io/badge/Platform-Desktop%20%26%20Mobile-475569?style=for-the-badge" alt="Desktop and mobile target">
-</p>
-
 <h1 align="center">Canvsidian</h1>
 
 <p align="center">
   <strong>JAM-inspired spatial tools for your existing Obsidian notes.</strong><br>
   Select, move, edit, annotate, and draw — without creating a separate canvas or note.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Obsidian-Plugin-7C3AED?style=for-the-badge&logo=obsidian&logoColor=white" alt="Obsidian Plugin">
+  <img src="https://img.shields.io/badge/Version-0.5.0-5B6DCD?style=for-the-badge" alt="Version 0.5.0">
+  <img src="https://img.shields.io/badge/Status-Experimental-E09F3E?style=for-the-badge" alt="Experimental">
+  <img src="https://img.shields.io/badge/Platform-Desktop%20%26%20Mobile-475569?style=for-the-badge" alt="Desktop and mobile target">
 </p>
 
 <p align="center" dir="rtl">
