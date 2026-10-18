@@ -47,10 +47,6 @@ It does not create a new note, Canvas file, or workspace view. The layout and an
 
 **Current version:** 0.5.0 · **Minimum Obsidian version:** 1.8.0 · **Status:** Experimental
 
-### Topics
-
-`obsidian` · `obsidian-plugin` · `obsidian-md` · `spatial-editing` · `visual-notes` · `vector-drawing` · `markdown` · `productivity` · `jam`
-
 ---
 
 ## ارتقا یا نصب
