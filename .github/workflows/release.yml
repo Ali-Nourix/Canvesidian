@@ -1,0 +1,150 @@
+name: Build and publish plugin
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never race two publishers or cancel a release while assets are uploading.
+concurrency:
+  group: plugin-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.manifest.outputs.version }}
+      tag: ${{ steps.manifest.outputs.tag }}
+      prerelease: ${{ steps.manifest.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Read release version from manifest
+        id: manifest
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const manifest = JSON.parse(readFileSync('manifest.json', 'utf8'));
+          const number = '(?:0|[1-9][0-9]*)';
+          const identifier = '(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)';
+          const semver = new RegExp(`^${number}\\.${number}\\.${number}(?:-${identifier}(?:\\.${identifier})*)?$`);
+          if (typeof manifest.version !== 'string' || !semver.test(manifest.version))
+            throw new Error('manifest.version must be SemVer, e.g. 0.6.5 or 0.6.6-beta.1 (no v prefix or build metadata).');
+          if (typeof manifest.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(manifest.id))
+            throw new Error('Invalid manifest.id');
+          // Obsidian downloads release assets using the exact manifest.version tag.
+          appendFileSync(process.env.GITHUB_OUTPUT,
+            `version=${manifest.version}\ntag=${manifest.version}\nprerelease=${manifest.version.includes('-')}\n`);
+          NODE
+      - run: npm ci
+      - name: Typecheck, unit tests and production build
+        run: npm run check
+      - name: Install test browser
+        run: npm exec -- playwright install --with-deps chromium
+      - name: Browser regression tests
+        run: npm run test:ui
+      - name: Package installable assets
+        shell: bash
+        run: |
+          python3 <<'PY'
+          import hashlib, json, pathlib, shutil, zipfile
+          root = pathlib.Path('.')
+          manifest = json.loads((root / 'manifest.json').read_text())
+          out = root / 'release-assets'
+          out.mkdir()
+          for name in ('main.js', 'manifest.json', 'styles.css'):
+              path = root / name
+              if not path.is_file() or not path.stat().st_size:
+                  raise RuntimeError(f'Missing or empty release asset: {name}')
+              shutil.copyfile(path, out / name)
+          archive = out / f"Canvsidian-{manifest['version']}.zip"
+          with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
+              for name in ('main.js', 'manifest.json', 'styles.css'):
+                  bundle.write(out / name, f"{manifest['id']}/{name}")
+          with zipfile.ZipFile(archive) as bundle:
+              assert bundle.testzip() is None
+              assert len(bundle.namelist()) == 3
+          assets = sorted(out.iterdir())
+          (out / 'SHA256SUMS.txt').write_text(''.join(
+              f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n'
+              for path in assets))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+      - name: Create tag and publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          IS_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum --check SHA256SUMS.txt
+          cd ..
+          release_exists=false
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > existing-release.json 2> release-error.txt; then
+            release_exists=true
+            if [ "$(jq -r '.draft' existing-release.json)" = false ]; then
+              echo "Release $RELEASE_TAG is already published; leaving its tag and assets unchanged." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          elif ! grep -q 'HTTP 404' release-error.txt; then
+            cat release-error.txt >&2
+            exit 1
+          fi
+
+          # Do not force-update tags. A partially failed run can resume only at its original commit.
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            tagged_commit=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")
+            if [ "$tagged_commit" != "$GITHUB_SHA" ]; then
+              echo "Tag $RELEASE_TAG points to another commit. Bump manifest.version; existing tags are never moved." >&2
+              exit 1
+            fi
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "Canvsidian $RELEASE_VERSION"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+
+          if [ "$release_exists" = false ]; then
+            extra=()
+            if [ "$IS_PRERELEASE" = true ]; then extra+=(--prerelease); fi
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "Canvsidian $RELEASE_VERSION" --generate-notes "${extra[@]}"
+          fi
+          # Upload while draft: a failed upload must not expose an incomplete public release.
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false
+          echo "Published Canvsidian $RELEASE_VERSION from commit $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
