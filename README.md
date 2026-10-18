@@ -1,10 +1,57 @@
-# Canvesidian 0.5 — JAM-inspired tools in the same note
+<p align="center">
+  <img src="https://img.shields.io/badge/Obsidian-Plugin-7C3AED?style=for-the-badge&logo=obsidian&logoColor=white" alt="Obsidian Plugin">
+  <img src="https://img.shields.io/badge/Version-0.5.0-5B6DCD?style=for-the-badge" alt="Version 0.5.0">
+  <img src="https://img.shields.io/badge/Status-Experimental-E09F3E?style=for-the-badge" alt="Experimental">
+  <img src="https://img.shields.io/badge/Platform-Desktop%20%26%20Mobile-475569?style=for-the-badge" alt="Desktop and mobile target">
+</p>
 
-**همان نوت، همان تب؛ بلاک را انتخاب کن، جابه‌جا کن و همان‌جا بنویس.**
+<h1 align="center">Canvsidian</h1>
 
-این نسخه مسیر drag را سبک‌تر می‌کند و کادر انتخاب شبیه ابزارهای طراحی، نوار ابزار شناورِ مخصوص آبجکت انتخاب‌شده، حذف تکی، ریست چیدمان و ترسیم برداری اضافه می‌کند. هیچ نوت، Canvas file یا workspace view جدیدی نمی‌سازد.
+<p align="center">
+  <strong>JAM-inspired spatial tools for your existing Obsidian notes.</strong><br>
+  Select, move, edit, annotate, and draw — without creating a separate canvas or note.
+</p>
 
-> **Experimental:** تست‌ها با CodeMirror واقعی و میزبان/renderer شبیه‌سازی‌شده اجرا شده‌اند؛ اجرای این نسخه داخل خود اپ Obsidian هنوز تأیید نشده است. ابتدا از vault و `data.json` بک‌آپ بگیرید و روی vault آزمایشی امتحان کنید. تصاویر QA تصویر اجرای واقعی Obsidian نیستند.
+<p align="center" dir="rtl">
+  <strong>ابزارهای فضایی با الهام از JAM برای نوت‌های موجود در Obsidian.</strong><br>
+  بلاک‌ها را انتخاب، جابه‌جا و ویرایش کنید و در همان نوت ترسیم و annotation اضافه کنید؛ بدون ساخت Canvas یا نوت جداگانه.
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#ارتقا-یا-نصب">Installation</a> ·
+  <a href="#انتخاب-و-چیدمان">Usage</a> ·
+  <a href="#محدودیتهای-مهم">Limitations</a> ·
+  <a href="#license">License</a>
+</p>
+
+---
+
+## Overview
+
+Canvsidian is an experimental Obsidian community plugin that adds JAM-inspired spatial editing tools to the **current Markdown note**. It lets you float existing Markdown blocks, move and resize them, draw vector shapes, and add sticky notes, labels, stickers, images, and native Obsidian icons in the same editor.
+
+It does not create a new note, Canvas file, or workspace view. The layout and annotations are stored in the plugin's `data.json`; the original Markdown remains in the note unless you explicitly edit or delete a block.
+
+> **Experimental:** Tests use real CodeMirror with a simulated host/renderer. Running this version inside the Obsidian app has not yet been verified. Back up your vault and `data.json`, then test in a disposable vault. QA screenshots are not captures from a live Obsidian session.
+
+## Features
+
+- Float and reposition existing top-level Markdown blocks in Live Preview.
+- Edit or return blocks to normal text flow in the same note.
+- Draw vector strokes, shapes, lines, and arrows.
+- Add sticky notes, labels, stickers, tape, imported images, and native Obsidian icons.
+- Resize and rotate supported objects; configure tool appearance from contextual controls.
+- Preserve note text when changing layout or resetting spatial effects.
+- Keep layout metadata and annotations local to the vault.
+
+**Current version:** 0.5.0 · **Minimum Obsidian version:** 1.8.0 · **Status:** Experimental
+
+### Topics
+
+`obsidian` · `obsidian-plugin` · `obsidian-md` · `spatial-editing` · `visual-notes` · `vector-drawing` · `markdown` · `productivity` · `jam`
+
+---
 
 ## ارتقا یا نصب
 
