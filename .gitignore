@@ -6,3 +6,5 @@ qa/harness.html
 qa/harness.js
 qa/*.png
 qa/performance-result.json
+
+qa/*failure.json

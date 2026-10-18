@@ -1,4 +1,4 @@
-/* Canvesidian — generated from src/. Run npm run build. */
+/* Canvsidian — generated from src/. Run npm run build. */
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -21,7 +21,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
-  default: () => Canvesidian
+  default: () => Canvsidian
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian7 = require("obsidian");
@@ -4298,7 +4298,7 @@ function normalize(raw) {
   }
   if (object.version !== 2 && object.version !== 3 && object.version !== 4 && object.version !== 5)
     throw new Error(
-      "Unsupported Canvesidian data version. Existing layout data was not overwritten."
+      "Unsupported Canvsidian data version. Existing layout data was not overwritten."
     );
   result.settings = normalizePreferences(object.settings);
   if (object.legacyBoards) result.legacyBoards = object.legacyBoards;
@@ -4312,6 +4312,7 @@ function normalize(raw) {
       "line",
       "diamond",
       "arrow",
+      "connector",
       "sticky",
       "label",
       "sticker",
@@ -4331,7 +4332,7 @@ function normalize(raw) {
       stroke: v.stroke,
       strokeWidth: limit(v.strokeWidth, 1, 32),
       opacity: limit(v.opacity, 0.1, 1),
-      fontSize: limit(v.fontSize, 12, 72),
+      fontSize: limit(v.fontSize, 12, 144),
       fill: v.fill === "none" || validStroke(v.fill) ? v.fill : "none",
       sticker: STICKERS.some((s) => s.id === v.sticker) ? v.sticker : "star"
     };
@@ -4346,6 +4347,7 @@ function normalize(raw) {
     if (!Array.isArray(note?.pins)) continue;
     result.notes[path] = {
       enabled: note.enabled !== false,
+      viewX: Number.isFinite(note.viewX) ? limit(note.viewX, -5e4, 5e4) : 0,
       drawings: normalizeDrawings(note.drawings),
       pins: note.pins.filter(
         (p) => p && typeof p.id === "string" && typeof p.text === "string" && typeof p.before === "string" && typeof p.after === "string" && [p.from, p.to, p.x, p.y, p.width, p.height].every(
@@ -4354,10 +4356,14 @@ function normalize(raw) {
       ).map((p) => ({
         ...p,
         rotation: normalizeAngle(p.rotation),
-        x: limit(p.x, 0, 5e4),
+        layer: Number.isFinite(p.layer) ? limit(p.layer, -1e5, 1e5) : 0,
+        fontSize: Number.isFinite(p.fontSize) ? limit(p.fontSize, 12, 144) : void 0,
+        color: validStroke(p.color) ? p.color : void 0,
+        background: validStroke(p.background) ? p.background : void 0,
+        x: limit(p.x, -5e4, 5e4),
         y: limit(p.y, 0, 5e4),
-        width: limit(p.width, 200, 1200),
-        height: limit(p.height, 80, 1e4)
+        width: limit(p.width, 120, 4e3),
+        height: limit(p.height, 28, 1e4)
       }))
     };
   }
@@ -4375,6 +4381,7 @@ function normalizeDrawings(raw) {
       "line",
       "diamond",
       "arrow",
+      "connector",
       "sticky",
       "label",
       "sticker",
@@ -4392,15 +4399,18 @@ function normalizeDrawings(raw) {
   ).map((d) => ({
     ...d,
     rotation: normalizeAngle(d.rotation),
+    layer: Number.isFinite(d.layer) ? limit(d.layer, -1e5, 1e5) : 0,
+    sourceId: ["connector", "arrow"].includes(d.kind) && typeof d.sourceId === "string" ? d.sourceId : void 0,
+    targetId: ["connector", "arrow"].includes(d.kind) && typeof d.targetId === "string" ? d.targetId : void 0,
     parentId: d.kind === "tape" && typeof d.parentId === "string" ? d.parentId : void 0,
     rotationOffset: normalizeAngle(d.rotationOffset),
     assetPath: safeAssetPath(d.assetPath) ? d.assetPath : void 0,
     iconId: typeof d.iconId === "string" && /^[a-z0-9-]{1,100}$/.test(d.iconId) ? d.iconId : "star",
     text: typeof d.text === "string" ? d.text.slice(0, 1e4) : "",
-    fontSize: Number.isFinite(d.fontSize) ? limit(d.fontSize, 12, 72) : 18,
+    fontSize: Number.isFinite(d.fontSize) ? limit(d.fontSize, 12, 144) : 18,
     fill: d.fill === "none" || validStroke(d.fill) ? d.fill : "none",
     sticker: STICKERS.some((s) => s.id === d.sticker) ? d.sticker : "star",
-    x: limit(d.x, 0, 5e4),
+    x: limit(d.x, -5e4, 5e4),
     y: limit(d.y, 0, 5e4),
     width: limit(d.width, 2, 1e4),
     height: limit(d.height, 2, 1e4),
@@ -4435,7 +4445,7 @@ function drawingFromPoints(kind, world, stroke = "currentColor", strokeWidth = 2
 }
 function resized(start, dx, dy, handle, minWidth = 24, minHeight = 24) {
   let left = start.x, top = start.y, right = left + start.width, bottom = top + start.height;
-  if (handle.includes("w")) left = limit(left + dx, 0, right - minWidth);
+  if (handle.includes("w")) left = limit(left + dx, -5e4, right - minWidth);
   if (handle.includes("e")) right = limit(right + dx, left + minWidth, 51200);
   if (handle.includes("n")) top = limit(top + dy, 0, bottom - minHeight);
   if (handle.includes("s")) bottom = limit(bottom + dy, top + minHeight, 6e4);
@@ -4449,7 +4459,33 @@ var STICKERS = [
   { id: "idea", icon: "lightbulb", label: "Idea", color: "#D5803B" },
   { id: "question", icon: "circle-help", label: "Question", color: "#9B6BC1" },
   { id: "flame", icon: "flame", label: "Flame", color: "#E56458" },
-  { id: "sparkles", icon: "sparkles", label: "Sparkles", color: "#9B6BC1" }
+  { id: "sparkles", icon: "sparkles", label: "Sparkles", color: "#9B6BC1" },
+  { id: "rocket", icon: "rocket", label: "Rocket", color: "#2783DE" },
+  { id: "sun", icon: "sun", label: "Sun", color: "#D5803B" },
+  { id: "moon", icon: "moon", label: "Moon", color: "#9B6BC1" },
+  { id: "cloud", icon: "cloud", label: "Cloud", color: "#2783DE" },
+  { id: "rainbow", icon: "rainbow", label: "Rainbow", color: "#E56458" },
+  { id: "smile", icon: "smile", label: "Smile", color: "#D5803B" },
+  {
+    id: "party-popper",
+    icon: "party-popper",
+    label: "Celebrate",
+    color: "#9B6BC1"
+  },
+  { id: "trophy", icon: "trophy", label: "Trophy", color: "#D5803B" },
+  { id: "target", icon: "target", label: "Target", color: "#E56458" },
+  { id: "flag", icon: "flag", label: "Flag", color: "#46A171" },
+  { id: "bookmark", icon: "bookmark", label: "Bookmark", color: "#2783DE" },
+  { id: "coffee", icon: "coffee", label: "Coffee", color: "#D5803B" },
+  { id: "music", icon: "music", label: "Music", color: "#9B6BC1" },
+  { id: "camera", icon: "camera", label: "Camera", color: "#2783DE" },
+  { id: "gift", icon: "gift", label: "Gift", color: "#E56458" },
+  { id: "flower-2", icon: "flower-2", label: "Flower", color: "#9B6BC1" },
+  { id: "leaf", icon: "leaf", label: "Leaf", color: "#46A171" },
+  { id: "tree-pine", icon: "tree-pine", label: "Tree", color: "#46A171" },
+  { id: "mountain", icon: "mountain", label: "Mountain", color: "#2783DE" },
+  { id: "zap", icon: "zap", label: "Lightning", color: "#D5803B" },
+  { id: "brain", icon: "brain", label: "Brain", color: "#9B6BC1" }
 ];
 var normalizePreferences = (raw) => ({
   dotGrid: raw?.dotGrid === true,
@@ -4483,7 +4519,11 @@ function rotatedResize(p, dx, dy, h, minWidth = 24, minHeight = 24) {
   return {
     ...next,
     rotation: p.rotation,
-    x: Math.max(0, p.x + p.width / 2 + cx * c - cy * s - next.width / 2),
+    x: limit(
+      p.x + p.width / 2 + cx * c - cy * s - next.width / 2,
+      -5e4,
+      5e4
+    ),
     y: Math.max(0, p.y + p.height / 2 + cx * s + cy * c - next.height / 2)
   };
 }
@@ -4499,6 +4539,73 @@ function tapeOnSticky(tape, parent) {
     )
   };
 }
+
+// src/object-camera.ts
+var cameras = /* @__PURE__ */ new WeakMap();
+var objectCameraX = (scroller) => cameras.get(scroller)?.x ?? 0;
+var setObjectCamera = (scroller, x) => cameras.get(scroller)?.set(x);
+function edgePanSpeed(x, left, right) {
+  if (x < left + 24) return Math.min(10, (left + 24 - x) * 0.4);
+  if (x > right - 24) return -Math.min(10, (x - right + 24) * 0.4);
+  return 0;
+}
+function revealObject(scroller, bounds) {
+  const left = scroller.scrollLeft - objectCameraX(scroller), width = scroller.clientWidth;
+  if (bounds.x < left + 16)
+    setObjectCamera(scroller, scroller.scrollLeft - bounds.x + 16);
+  else if (bounds.x + bounds.width > left + width - 16)
+    setObjectCamera(
+      scroller,
+      scroller.scrollLeft - bounds.x - Math.min(bounds.width, width - 32) + width - 16
+    );
+}
+var ObjectCamera = class {
+  constructor(editor, scroller, layer, changed) {
+    this.editor = editor;
+    this.scroller = scroller;
+    this.layer = layer;
+    this.changed = changed;
+    this.viewport.className = "cv-object-viewport";
+    this.viewport.contentEditable = "false";
+    this.viewport.append(layer);
+    scroller.append(this.viewport);
+    cameras.set(scroller, this);
+    this.observer = new ResizeObserver(this.schedule);
+    this.observer.observe(editor);
+    this.observer.observe(scroller);
+    this.layout();
+  }
+  viewport = document.createElement("div");
+  x = 0;
+  observer;
+  frame = 0;
+  destroyed = false;
+  schedule = () => {
+    if (!this.frame && !this.destroyed)
+      this.frame = requestAnimationFrame(() => {
+        this.frame = 0;
+        this.layout();
+      });
+  };
+  layout() {
+    this.viewport.style.width = this.scroller.clientWidth + "px";
+    this.layer.style.transform = `translate3d(${this.x}px,0,0)`;
+  }
+  set(value, notify = true) {
+    const x = limit(Number.isFinite(value) ? value : 0, -5e4, 5e4);
+    if (x === this.x) return;
+    this.x = x;
+    this.layout();
+    if (notify) this.changed(x);
+  }
+  destroy() {
+    this.destroyed = true;
+    cancelAnimationFrame(this.frame);
+    this.observer.disconnect();
+    cameras.delete(this.scroller);
+    this.viewport.remove();
+  }
+};
 
 // src/spatial.ts
 var import_state = require("@codemirror/state");
@@ -4527,15 +4634,33 @@ function previewGesture(event, options) {
     x: event.clientX,
     y: event.clientY,
     sx: scroller.scrollLeft,
-    sy: scroller.scrollTop
+    sy: scroller.scrollTop,
+    camera: objectCameraX(scroller)
   };
-  let current = { ...start };
-  let frame = 0;
-  let done = false;
+  let current = { ...start }, clientX = event.clientX, clientY = event.clientY, frame = 0, done = false, moved = false;
   root.classList.add("is-transforming");
   scroller.classList.add("cv-has-gesture");
+  const project = () => {
+    current = options.project(
+      clientX - origin.x + scroller.scrollLeft - origin.sx - objectCameraX(scroller) + origin.camera,
+      clientY - origin.y + scroller.scrollTop - origin.sy
+    );
+  };
   const paint = () => {
     frame = 0;
+    if (moved && options.autoPan !== false) {
+      const r = scroller.getBoundingClientRect();
+      const speed = edgePanSpeed(
+        clientX,
+        r.left + scroller.clientLeft,
+        r.left + scroller.clientLeft + scroller.clientWidth
+      );
+      if (speed) {
+        setObjectCamera(scroller, objectCameraX(scroller) + speed);
+        project();
+        frame = requestAnimationFrame(paint);
+      }
+    }
     root.style.transform = `translate3d(${current.x - start.x}px,${current.y - start.y}px,0)`;
     if (current.width !== start.width) root.style.width = current.width + "px";
     if (options.explicitHeight && current.height !== start.height)
@@ -4544,10 +4669,10 @@ function previewGesture(event, options) {
   };
   const move = (e) => {
     if (e.pointerId !== event.pointerId || done) return;
-    current = options.project(
-      e.clientX - origin.x + scroller.scrollLeft - origin.sx,
-      e.clientY - origin.y + scroller.scrollTop - origin.sy
-    );
+    moved ||= Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > 1;
+    clientX = e.clientX;
+    clientY = e.clientY;
+    project();
     if (!frame) frame = requestAnimationFrame(paint);
   };
   const finish = (cancel) => {
@@ -4558,6 +4683,8 @@ function previewGesture(event, options) {
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", cancelEvent);
     window.removeEventListener("blur", blur);
+    window.removeEventListener("keydown", key, true);
+    if (cancel) setObjectCamera(scroller, origin.camera);
     const value = cancel ? start : current;
     root.style.transform = "";
     root.style.left = value.x + "px";
@@ -4572,25 +4699,73 @@ function previewGesture(event, options) {
     options.finishPreview?.();
   };
   const up = (e) => {
-    if (e.pointerId !== event.pointerId) return;
-    move(e);
-    finish(false);
+    if (e.pointerId === event.pointerId) {
+      move(e);
+      finish(false);
+    }
   };
   const cancelEvent = (e) => {
     if (e.pointerId === event.pointerId) finish(true);
   };
   const blur = () => finish(true);
+  const key = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      finish(true);
+    }
+  };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
   window.addEventListener("pointercancel", cancelEvent);
   window.addEventListener("blur", blur);
+  window.addEventListener("keydown", key, true);
   return () => finish(true);
 }
 var Selection = class {
-  constructor(scroller) {
+  constructor(scroller, applyLayers) {
     this.scroller = scroller;
+    this.applyLayers = applyLayers;
+    this.observer = new ResizeObserver(() => this.align());
+    this.observer.observe(scroller);
+  }
+  observer;
+  align() {
+    for (const item of this.items) item.alignGrip?.();
+  }
+  destroy() {
+    this.observer.disconnect();
+    this.items.clear();
   }
   current = null;
+  items = /* @__PURE__ */ new Set();
+  register(item) {
+    this.items.add(item);
+  }
+  refreshLayers() {
+    [...this.items].sort((a, b) => (a.position().layer ?? 0) - (b.position().layer ?? 0)).forEach((item, i) => item.root.style.zIndex = String(i + 1));
+  }
+  reorder(direction, item = this.current) {
+    if (!item) return;
+    const ordered = [...this.items].sort(
+      (a, b) => (a.position().layer ?? 0) - (b.position().layer ?? 0)
+    );
+    const index = ordered.indexOf(item);
+    const next = direction === "front" ? ordered.length - 1 : direction === "back" ? 0 : Math.max(
+      0,
+      Math.min(
+        ordered.length - 1,
+        index + (direction === "forward" ? 1 : -1)
+      )
+    );
+    if (index === next) return;
+    ordered.splice(index, 1);
+    ordered.splice(next, 0, item);
+    const layers = Object.fromEntries(ordered.map((i, n) => [i.id, n]));
+    if (this.applyLayers) this.applyLayers(layers);
+    else for (const i of ordered) i.setLayer?.(layers[i.id]);
+    this.refreshLayers();
+  }
   select(item) {
     if (this.current !== item) {
       this.current?.root.querySelectorAll(".cv-property-popover").forEach((n) => n.remove());
@@ -4601,15 +4776,16 @@ var Selection = class {
     this.position();
   }
   position() {
+    this.align();
     const item = this.current;
     if (!item) return;
     const p = item.position();
     const bounds = item.bounds?.() ?? p;
-    const outside = bounds.x + bounds.width < this.scroller.scrollLeft || bounds.x > this.scroller.scrollLeft + this.scroller.clientWidth || bounds.y + bounds.height < this.scroller.scrollTop || bounds.y > this.scroller.scrollTop + this.scroller.clientHeight;
+    const outside = bounds.x + bounds.width < this.scroller.scrollLeft - objectCameraX(this.scroller) || bounds.x > this.scroller.scrollLeft - objectCameraX(this.scroller) + this.scroller.clientWidth || bounds.y + bounds.height < this.scroller.scrollTop || bounds.y > this.scroller.scrollTop + this.scroller.clientHeight;
     item.toolbar.hidden = outside;
     if (outside) return;
     const width = item.toolbar.offsetWidth || 240;
-    const left = this.scroller.scrollLeft, top = this.scroller.scrollTop;
+    const left = this.scroller.scrollLeft - objectCameraX(this.scroller), top = this.scroller.scrollTop;
     item.toolbar.style.left = limit(
       bounds.x - p.x,
       left + 8 - p.x,
@@ -4622,6 +4798,7 @@ var Selection = class {
   }
   remove(item) {
     if (this.current === item) this.select(null);
+    this.items.delete(item);
   }
 };
 function addHandles(parent, onPointer, onKey) {
@@ -4635,20 +4812,164 @@ function addHandles(parent, onPointer, onKey) {
     parent.append(b);
   }
 }
-function leftGrip(root, read, drag, key) {
-  const b = iconButton(
-    root,
-    "grip-vertical",
-    "Move object from left",
-    () => root.focus({ preventScroll: true })
+function rightGutter(scroller) {
+  const content2 = scroller.querySelector(".cm-content");
+  const rect = scroller.getBoundingClientRect(), size = matchMedia("(pointer:coarse)").matches ? 44 : 28;
+  return Math.min(
+    (content2?.getBoundingClientRect().right ?? rect.right) + 8,
+    rect.left + scroller.clientLeft + scroller.clientWidth - size - 8
+  ) - rect.left + scroller.scrollLeft;
+}
+function gripInteraction(button, drag, menu) {
+  let cleanup = null;
+  button.onpointerdown = (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    cleanup?.();
+    let dragged = false;
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", stop);
+      cleanup = null;
+    };
+    const move = (e) => {
+      if (e.pointerId !== event.pointerId) return;
+      if (Math.hypot(e.clientX - event.clientX, e.clientY - event.clientY) > 4) {
+        dragged = true;
+        stop();
+        drag(event);
+        window.dispatchEvent(new PointerEvent("pointermove", e));
+      }
+    };
+    const up = (e) => {
+      if (e.pointerId !== event.pointerId) return;
+      stop();
+      if (!dragged) menu();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", stop);
+    window.addEventListener("blur", stop);
+    cleanup = stop;
+  };
+  button.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.detail === 0) menu();
+  };
+  return () => cleanup?.();
+}
+var activeMenus = /* @__PURE__ */ new WeakMap();
+function actionMenu(anchor, actions) {
+  const editor = anchor.closest(".cm-editor");
+  if (!editor) return;
+  activeMenus.get(editor)?.hide();
+  const menu = new import_obsidian.Menu();
+  activeMenus.set(editor, menu);
+  const owner = anchor.parentElement;
+  const close = () => menu.hide();
+  for (const action2 of actions) {
+    if (action2.separator) menu.addSeparator();
+    menu.addItem((item) => {
+      item.setTitle(action2.label).setIcon(action2.icon ?? null).setWarning(action2.label === "Delete").onClick(() => action2.run());
+    });
+  }
+  owner.addEventListener("cv-destroy", close, { once: true });
+  menu.onHide(() => {
+    owner.removeEventListener("cv-destroy", close);
+    if (activeMenus.get(editor) === menu) activeMenus.delete(editor);
+  });
+  const rect = anchor.getBoundingClientRect();
+  menu.showAtPosition(
+    { x: rect.left, y: rect.bottom, width: rect.width, left: true },
+    anchor.ownerDocument
   );
+}
+async function copyText(text, notify) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    notify("Could not copy text to the clipboard.");
+  }
+}
+function alignmentActions(scroller, position, change) {
+  return ["left", "center", "right"].map((side, i) => ({
+    label: "Align to note " + side,
+    icon: "align-" + side,
+    run: () => {
+      const content2 = scroller.querySelector(".cm-content");
+      if (!content2) return;
+      const rect = content2.getBoundingClientRect(), viewport = scroller.getBoundingClientRect(), css = getComputedStyle(content2);
+      const left = rect.left - viewport.left + scroller.scrollLeft - objectCameraX(scroller) + parseFloat(css.paddingLeft || "0");
+      const width = rect.width - parseFloat(css.paddingLeft || "0") - parseFloat(css.paddingRight || "0");
+      const p = position();
+      change({
+        ...p,
+        x: limit(left + (width - p.width) * i / 2, -5e4, 5e4)
+      });
+    }
+  }));
+}
+function layerActions(selection, item) {
+  return [
+    {
+      separator: true,
+      label: "Bring forward \xB7 Ctrl/Cmd+]",
+      icon: "bring-to-front",
+      run: () => selection.reorder("forward", item)
+    },
+    {
+      label: "Send backward \xB7 Ctrl/Cmd+[",
+      icon: "send-to-back",
+      run: () => selection.reorder("backward", item)
+    },
+    {
+      label: "Bring to front",
+      icon: "bring-to-front",
+      run: () => selection.reorder("front", item)
+    },
+    {
+      label: "Send to back",
+      icon: "send-to-back",
+      run: () => selection.reorder("back", item)
+    }
+  ];
+}
+function leftGrip(root, read, drag, key, menu) {
+  const b = iconButton(root, "grip-vertical", "Block actions", () => {
+  });
   b.classList.add("cv-object-grip");
-  b.onpointerdown = drag;
+  const cancel = gripInteraction(
+    b,
+    drag,
+    menu ?? (() => root.focus({ preventScroll: true }))
+  );
   if (key) b.onkeydown = key;
+  root.addEventListener("cv-destroy", cancel, { once: true });
   return () => {
-    const p = read(), a = rotatedBounds(p);
-    b.style.left = a.x - p.x - 36 + "px";
-    b.style.top = a.y - p.y + a.height / 2 - 16 + "px";
+    const p = read(), bounds = rotatedBounds(p);
+    const r = root.getBoundingClientRect();
+    const frame = root.querySelector(".cv-rotated-frame")?.getBoundingClientRect();
+    const scroller = root.closest(".cm-editor")?.querySelector(".cm-scroller");
+    const width = b.offsetWidth || (matchMedia("(pointer:coarse)").matches ? 44 : 28);
+    const height = b.offsetHeight || (matchMedia("(pointer:coarse)").matches ? 44 : 32);
+    const scaleX = root.offsetWidth ? r.width / root.offsetWidth : 1;
+    const scaleY = root.offsetHeight ? r.height / root.offsetHeight : 1;
+    let x = frame?.width ? frame.right + 8 : r.left + bounds.x - p.x + bounds.width + 8;
+    const center = frame?.height ? frame.top + frame.height / 2 : r.top + bounds.y - p.y + bounds.height / 2;
+    if (scroller) {
+      const v = scroller.getBoundingClientRect();
+      x = limit(
+        x,
+        v.left + scroller.clientLeft + 8,
+        v.left + scroller.clientLeft + scroller.clientWidth - width - 8
+      );
+    }
+    b.style.left = (x - r.left) / (scaleX || 1) + "px";
+    b.style.top = (center - r.top) / (scaleY || 1) - height / 2 + "px";
   };
 }
 function rotationField(parent, value, change) {
@@ -4741,6 +5062,151 @@ function rotationHandle(root, frame, read, commit, preview) {
     cleanup = () => finish(true);
   };
   return () => cleanup?.();
+}
+
+// src/connectors.ts
+var margin = 18;
+var contains = (r, p) => p[0] > r.x && p[0] < r.x + r.width && p[1] > r.y && p[1] < r.y + r.height;
+function clear(a, b, boxes) {
+  return !boxes.some(
+    (r) => a[0] === b[0] ? a[0] > r.x && a[0] < r.x + r.width && Math.max(a[1], b[1]) > r.y && Math.min(a[1], b[1]) < r.y + r.height : a[1] > r.y && a[1] < r.y + r.height && Math.max(a[0], b[0]) > r.x && Math.min(a[0], b[0]) < r.x + r.width
+  );
+}
+function port(a, b) {
+  const dx = b.x + b.width / 2 - a.x - a.width / 2, dy = b.y + b.height / 2 - a.y - a.height / 2;
+  if (Math.abs(dx) / (a.width + b.width) >= Math.abs(dy) / (a.height + b.height)) {
+    const x = dx >= 0 ? a.x + a.width : a.x;
+    return [
+      [x, a.y + a.height / 2],
+      [x + (dx >= 0 ? margin : -margin), a.y + a.height / 2]
+    ];
+  }
+  const y = dy >= 0 ? a.y + a.height : a.y;
+  return [
+    [a.x + a.width / 2, y],
+    [a.x + a.width / 2, y + (dy >= 0 ? margin : -margin)]
+  ];
+}
+function connectorRoute(source, target, targets) {
+  const a = rotatedBounds(source), b = rotatedBounds(target);
+  const [start, exit] = port(a, b), [end, entry] = port(b, a);
+  const boxes = targets.map(rotatedBounds).map((r) => ({
+    ...r,
+    x: r.x - margin,
+    y: r.y - margin,
+    width: r.width + margin * 2,
+    height: r.height + margin * 2
+  }));
+  const fallback = [start, exit, [entry[0], exit[1]], entry, end];
+  if (boxes.some((r) => contains(r, exit) || contains(r, entry)))
+    return fallback;
+  const xs = [
+    .../* @__PURE__ */ new Set([
+      exit[0],
+      entry[0],
+      ...boxes.flatMap((r) => [r.x, r.x + r.width])
+    ])
+  ].sort((a2, b2) => a2 - b2);
+  const ys = [
+    .../* @__PURE__ */ new Set([
+      exit[1],
+      entry[1],
+      ...boxes.flatMap((r) => [r.y, r.y + r.height])
+    ])
+  ].sort((a2, b2) => a2 - b2);
+  const key = (x, y) => y * xs.length + x;
+  const sx = xs.indexOf(exit[0]), sy = ys.indexOf(exit[1]), ex = xs.indexOf(entry[0]), ey = ys.indexOf(entry[1]);
+  const startKey = key(sx, sy), endKey = key(ex, ey);
+  const distance = /* @__PURE__ */ new Map([[startKey, 0]]), prev = /* @__PURE__ */ new Map();
+  const queue = /* @__PURE__ */ new Set([startKey]);
+  while (queue.size) {
+    let current = -1, best = Infinity;
+    for (const k of queue) {
+      const x2 = k % xs.length, y2 = Math.floor(k / xs.length);
+      const score = distance.get(k) + Math.abs(xs[x2] - entry[0]) + Math.abs(ys[y2] - entry[1]);
+      if (score < best) {
+        best = score;
+        current = k;
+      }
+    }
+    queue.delete(current);
+    if (current === endKey) {
+      const path = [];
+      let k = current;
+      while (true) {
+        path.push([xs[k % xs.length], ys[Math.floor(k / xs.length)]]);
+        if (k === startKey) break;
+        k = prev.get(k);
+      }
+      const route = [start, ...path.reverse(), end];
+      return route.filter(
+        (p, i) => i === 0 || i === route.length - 1 || !(route[i - 1][0] === p[0] && p[0] === route[i + 1][0] || route[i - 1][1] === p[1] && p[1] === route[i + 1][1])
+      );
+    }
+    const x = current % xs.length, y = Math.floor(current / xs.length);
+    for (const [nx, ny] of [
+      [x - 1, y],
+      [x + 1, y],
+      [x, y - 1],
+      [x, y + 1]
+    ]) {
+      if (nx < 0 || ny < 0 || nx >= xs.length || ny >= ys.length) continue;
+      const p = [xs[nx], ys[ny]], q = [xs[x], ys[y]];
+      if (boxes.some((r) => contains(r, p)) || !clear(q, p, boxes)) continue;
+      const next = key(nx, ny), cost = distance.get(current) + Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]);
+      if (cost < (distance.get(next) ?? Infinity)) {
+        distance.set(next, cost);
+        prev.set(next, current);
+        queue.add(next);
+      }
+    }
+  }
+  return fallback;
+}
+function geometry(d, points) {
+  const x = Math.min(...points.map((p) => p[0])), y = Math.min(...points.map((p) => p[1]));
+  const width = Math.max(2, Math.max(...points.map((p) => p[0])) - x), height = Math.max(2, Math.max(...points.map((p) => p[1])) - y);
+  return {
+    ...d,
+    x,
+    y,
+    width,
+    height,
+    rotation: 0,
+    points: points.map((p) => [(p[0] - x) / width, (p[1] - y) / height])
+  };
+}
+function routeConnector(d, targets) {
+  const source = targets.find((t2) => t2.id === d.sourceId), target = targets.find((t2) => t2.id === d.targetId);
+  if (source && target)
+    return geometry(d, connectorRoute(source, target, targets));
+  const pts = d.points ?? [
+    [0, 0],
+    [1, 1]
+  ], first = pts[0], last = pts[pts.length - 1];
+  const start = [d.x + first[0] * d.width, d.y + first[1] * d.height], end = [d.x + last[0] * d.width, d.y + last[1] * d.height];
+  if (source) {
+    const [edge] = port(rotatedBounds(source), {
+      x: end[0],
+      y: end[1],
+      width: 1,
+      height: 1
+    });
+    return geometry(d, [edge, end]);
+  }
+  if (target) {
+    const [edge] = port(rotatedBounds(target), {
+      x: start[0],
+      y: start[1],
+      width: 1,
+      height: 1
+    });
+    return geometry(d, [start, edge]);
+  }
+  return d;
+}
+function targetAt(point, targets) {
+  return [...targets].reverse().sort((a, b) => (b.layer ?? 0) - (a.layer ?? 0)).find((t2) => contains(rotatedBounds(t2), point));
 }
 
 // src/design-tools.ts
@@ -4915,7 +5381,7 @@ function stylePanel(parent, kind, value, change) {
     swatches(textKind ? "Text color" : "Stroke color", COLORS, "stroke");
     if (textKind || ["rect", "ellipse", "diamond", "triangle"].includes(kind))
       swatches("Fill", textKind ? PAPERS : ["none", ...PAPERS], "fill");
-    if (textKind) number2("Font size", "fontSize", 12, 48, 1);
+    if (textKind) number2("Font size", "fontSize", 12, 144, 1);
     else number2("Size", "strokeWidth", 1, 32, 1);
     number2("Opacity", "opacity", 0.1, 1, 0.05);
   }
@@ -5024,12 +5490,12 @@ function drawingSVG(d) {
   shape.setAttribute("vector-effect", "non-scaling-stroke");
   shape.setAttribute("opacity", String(d.opacity));
   svg.append(shape);
-  if (d.kind === "arrow") {
+  if (d.kind === "arrow" || d.kind === "connector") {
     const pts = d.points ?? [
       [0, 0],
       [1, 1]
     ];
-    const a = pts[0], b = pts[pts.length - 1];
+    const a = pts[pts.length - 2], b = pts[pts.length - 1];
     const angle = Math.atan2((b[1] - a[1]) * d.height, (b[0] - a[0]) * d.width);
     const size = Math.max(12, d.strokeWidth * 3);
     const head = document.createElementNS(NS, "path");
@@ -5082,19 +5548,67 @@ var DesignTools = class {
       () => this.setMode("select")
     );
     select.dataset.tool = "select";
+    const objectView = iconButton(
+      this.dock,
+      "hand",
+      "Object view",
+      () => actionMenu(objectView, [
+        {
+          label: "View space to the left",
+          icon: "arrow-left",
+          run: () => setObjectCamera(
+            view.scrollDOM,
+            objectCameraX(view.scrollDOM) + view.scrollDOM.clientWidth / 2
+          )
+        },
+        {
+          label: "Show selected object",
+          icon: "focus",
+          run: () => {
+            const item = this.selection.current;
+            if (item)
+              revealObject(view.scrollDOM, item.bounds?.() ?? item.position());
+            else this.cb.notify("Select an object first.");
+          }
+        },
+        {
+          label: "Reset object view",
+          icon: "focus",
+          run: () => setObjectCamera(view.scrollDOM, 0)
+        },
+        {
+          label: "View space to the right",
+          icon: "arrow-right",
+          run: () => setObjectCamera(
+            view.scrollDOM,
+            objectCameraX(view.scrollDOM) - view.scrollDOM.clientWidth / 2
+          )
+        }
+      ])
+    );
+    objectView.title = "Object view \xB7 Alt+wheel to pan objects without moving the note";
     const groups = [
-      ["Draw tools", "pencil", ["pen", "highlighter", "tape"]],
+      ["Draw tools", "pen-tool", ["pen", "highlighter"]],
       [
         "Shapes and lines",
         "shapes",
-        ["rect", "ellipse", "diamond", "triangle", "line", "arrow"]
+        [
+          "rect",
+          "ellipse",
+          "diamond",
+          "triangle",
+          "line",
+          "arrow",
+          "connector",
+          "tape"
+        ]
       ],
       [
         "Notes and labels",
         "sticky-note",
         ["sticky", "label", "text", "section", "table", "code"]
       ],
-      ["Stickers", "stamp", ["sticker"]],
+      ["Stickers", "smile", ["sticker"]],
       ["Images and icons", "image-plus", ["image", "icon"]]
     ];
     for (const [label, icon, modes] of groups) {
@@ -5107,13 +5621,6 @@ var DesignTools = class {
       b.dataset.group = label;
       b.setAttribute("aria-expanded", "false");
     }
-    iconButton(this.dock, "sliders-horizontal", "Tool settings", () => {
-      if (this.mode === "select") {
-        if (this.selection.current?.openSettings)
-          this.selection.current.openSettings();
-        else this.cb.openPreferences();
-      } else this.openOptions();
-    });
     iconButton(
       this.dock,
       "settings",
@@ -5122,7 +5629,7 @@ var DesignTools = class {
     );
     const toggle = iconButton(
       this.dock,
-      "wand-sparkles",
+      "toggle-right",
       "Toggle note effects",
       () => this.cb.toggle()
     );
@@ -5170,7 +5677,7 @@ var DesignTools = class {
     const deselect = (e) => {
       if (!(e.target instanceof Element)) return;
       if (!e.target.closest(
-        ".cv-floating-block,.cv-drawing-object,.cv-tool-dock,.cv-context-toolbar"
+        ".cv-floating-block,.cv-drawing-object,.cv-tool-dock,.cv-context-toolbar,.menu"
       ))
         this.selection.select(null);
     };
@@ -5178,9 +5685,32 @@ var DesignTools = class {
     this.cleanups.push(
       () => view.dom.removeEventListener("pointerdown", deselect)
     );
+    const outsideEditor = (e) => {
+      if (e.target?.closest(
+        ".modal-container,.modal,.test-modal-backdrop,.menu"
+      ))
+        return;
+      if (!view.dom.contains(e.target)) this.selection.select(null);
+    };
+    view.dom.ownerDocument.addEventListener("pointerdown", outsideEditor, true);
+    this.cleanups.push(
+      () => view.dom.ownerDocument.removeEventListener(
+        "pointerdown",
+        outsideEditor,
+        true
+      )
+    );
     const key = (e) => {
       const target = e.target;
       if (target.closest("textarea,input,select,.cm-content")) return;
+      if ((e.ctrlKey || e.metaKey) && ["BracketLeft", "BracketRight"].includes(e.code) && this.selection.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selection.reorder(
+          e.code === "BracketRight" ? e.shiftKey ? "front" : "forward" : e.shiftKey ? "back" : "backward"
+        );
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -5209,6 +5739,10 @@ var DesignTools = class {
   history = [];
   future = [];
   path = "";
+  connectorStart = null;
+  routePins = null;
+  routeDrawings = null;
+  routed = /* @__PURE__ */ new Map();
   options = /* @__PURE__ */ new Map();
   tray;
   outside;
@@ -5230,6 +5764,7 @@ var DesignTools = class {
     triangle: "Draw triangle",
     line: "Draw line",
     arrow: "Draw arrow",
+    connector: "Connect objects",
     sticky: "Add sticky note",
     label: "Add label",
     text: "Add text annotation",
@@ -5253,13 +5788,14 @@ var DesignTools = class {
     const icons = {
       pen: "pencil",
       highlighter: "highlighter",
-      tape: "tape",
+      tape: "ticket",
       rect: "square",
       ellipse: "circle",
       diamond: "diamond",
       triangle: "triangle",
       line: "minus",
       arrow: "arrow-up-right",
+      connector: "workflow",
       sticky: "sticky-note",
       label: "tag",
       text: "type",
@@ -5315,7 +5851,7 @@ var DesignTools = class {
           ...asset,
           id: crypto.randomUUID(),
           kind: "image",
-          x: s.scrollLeft + Math.max(40, (s.clientWidth - asset.width) / 2),
+          x: s.scrollLeft - objectCameraX(s) + Math.max(40, (s.clientWidth - asset.width) / 2),
           y: s.scrollTop + 100
         };
         this.commit([...state.drawings, value]);
@@ -5364,10 +5900,15 @@ var DesignTools = class {
   setMode(mode) {
     if (mode !== this.mode) this.disposeDrawing?.();
     this.mode = mode;
+    this.connectorStart = null;
+    this.layer.querySelectorAll(".is-connector-source,.is-connector-target").forEach(
+      (e) => e.classList.remove("is-connector-source", "is-connector-target")
+    );
     const groupFor = {
       pen: "Draw tools",
       highlighter: "Draw tools",
-      tape: "Draw tools",
+      tape: "Shapes and lines",
+      connector: "Shapes and lines",
       rect: "Shapes and lines",
       ellipse: "Shapes and lines",
       diamond: "Shapes and lines",
@@ -5425,6 +5966,11 @@ var DesignTools = class {
       '[aria-label="Toggle note effects"]'
     );
     toggle?.setAttribute("aria-pressed", String(state.enabled));
+    toggle?.setAttribute(
+      "title",
+      state.enabled ? "Disable note effects" : "Enable note effects"
+    );
+    if (toggle) (0, import_obsidian3.setIcon)(toggle, state.enabled ? "toggle-right" : "toggle-left");
     const prefs = this.cb.getPreferences();
     this.view.scrollDOM.classList.toggle("cv-dot-grid", show && prefs.dotGrid);
     this.view.scrollDOM.style.setProperty(
@@ -5441,8 +5987,18 @@ var DesignTools = class {
         obj.destroy();
         this.shapes.delete(id);
       }
+    if (state.pins !== this.routePins || state.drawings !== this.routeDrawings) {
+      this.routePins = state.pins;
+      this.routeDrawings = state.drawings;
+      this.routed.clear();
+      const targets = this.targets();
+      for (const d of state.drawings)
+        if (d.kind === "connector" || d.sourceId || d.targetId)
+          this.routed.set(d.id, routeConnector(d, targets));
+    }
     if (show)
-      for (const d of state.drawings) {
+      for (const saved of state.drawings) {
+        const d = this.routed.get(saved.id) ?? saved;
         let object = this.shapes.get(d.id);
         if (!object) {
           object = new DrawingObject(
@@ -5469,6 +6025,7 @@ var DesignTools = class {
       if (button)
         button.disabled = label === "Undo drawing" ? !this.history.length : !this.future.length;
     }
+    this.selection.refreshLayers();
     this.selection.position();
   }
   change(value) {
@@ -5489,7 +6046,16 @@ var DesignTools = class {
       )
     );
   }
+  previewTarget(id, placement) {
+    const targets = this.targets().map(
+      (t2) => t2.id === id && placement ? { ...t2, ...placement } : t2
+    );
+    for (const obj of this.shapes.values())
+      if (obj.value.kind === "connector" || obj.value.sourceId || obj.value.targetId)
+        obj.update(routeConnector(obj.value, targets));
+  }
   previewChildren(id, placement) {
+    this.previewTarget(id, placement);
     const parent = this.shapes.get(id);
     if (!parent) return;
     for (const child of this.shapes.values())
@@ -5526,7 +6092,7 @@ var DesignTools = class {
     const next = {
       ...old,
       id: crypto.randomUUID(),
-      x: limit(old.x + 32, 0, 5e4),
+      x: limit(old.x + 32, -5e4, 5e4),
       y: limit(old.y + 32, 0, 5e4),
       parentId: void 0
     };
@@ -5535,11 +6101,20 @@ var DesignTools = class {
   }
   remove(id) {
     this.commit(
-      this.cb.read().drawings.filter((d) => d.id !== id && d.parentId !== id)
+      this.cb.read().drawings.filter(
+        (d) => d.id !== id && d.parentId !== id && d.sourceId !== id && d.targetId !== id
+      )
     );
     this.dock.querySelector("[data-tool=select]")?.focus({ preventScroll: true });
   }
   commit(next) {
+    const state = this.cb.read(), ids = new Set(state.drawings.map((d) => d.id));
+    let top = Math.max(
+      0,
+      ...state.pins.map((p) => p.layer ?? 0),
+      ...state.drawings.map((d) => d.layer ?? 0)
+    );
+    next = next.map((d) => ids.has(d.id) ? d : { ...d, layer: ++top });
     this.history.push(this.cb.read().drawings);
     if (this.history.length > 40) this.history.shift();
     this.future = [];
@@ -5560,9 +6135,59 @@ var DesignTools = class {
   point(e) {
     const rect = this.view.scrollDOM.getBoundingClientRect();
     return [
-      limit(e.clientX - rect.left + this.view.scrollDOM.scrollLeft, 0, 5e4),
+      limit(
+        e.clientX - rect.left - this.view.scrollDOM.clientLeft + this.view.scrollDOM.scrollLeft - objectCameraX(this.view.scrollDOM),
+        -5e4,
+        5e4
+      ),
       limit(e.clientY - rect.top + this.view.scrollDOM.scrollTop, 0, 5e4)
     ];
+  }
+  targets() {
+    const state = this.cb.read();
+    return [
+      ...state.pins,
+      ...state.drawings.filter(
+        (d) => !["connector", "line", "arrow", "pen", "tape"].includes(d.kind)
+      )
+    ];
+  }
+  connectAt(event) {
+    const target = targetAt(this.point(event), this.targets());
+    if (!target) {
+      this.cb.notify("Click a shape or text block to connect it.");
+      return;
+    }
+    if (!this.connectorStart) {
+      this.connectorStart = target.id;
+      this.layer.querySelectorAll(".cv-drawing-object,.cv-floating-block").forEach(
+        (el) => el.classList.toggle(
+          "is-connector-source",
+          el.dataset.id === target.id
+        )
+      );
+      this.cb.notify("Now click the destination object.");
+      return;
+    }
+    if (this.connectorStart === target.id) return;
+    const sourceId = this.connectorStart;
+    const value = routeConnector(
+      {
+        ...this.settings(),
+        id: crypto.randomUUID(),
+        kind: "connector",
+        sourceId,
+        targetId: target.id,
+        x: 0,
+        y: 0,
+        width: 2,
+        height: 2
+      },
+      this.targets()
+    );
+    this.commit([...this.cb.read().drawings, value]);
+    this.setMode("select");
+    this.selection.select(this.shapes.get(value.id) ?? null);
   }
   beginDrawing(event) {
     if (event.button !== 0 || this.mode === "select") return;
@@ -5571,6 +6196,10 @@ var DesignTools = class {
     this.disposeDrawing?.();
     this.tray.hidden = true;
     const mode = this.mode;
+    if (mode === "connector") {
+      this.connectAt(event);
+      return;
+    }
     const settings = { ...this.settings() };
     if ([
       "sticky",
@@ -5699,8 +6328,10 @@ var DrawingObject = class {
     this.addTape = addTape;
     this.children = children;
     this.id = value.id;
+    this.selection.register(this);
     this.root = document.createElement("div");
     this.root.className = "cv-drawing-object";
+    this.root.dataset.id = value.id;
     this.root.tabIndex = 0;
     this.root.onfocus = () => this.selection.select(this);
     this.root.addEventListener("focusin", () => this.selection.select(this));
@@ -5786,7 +6417,8 @@ var DrawingObject = class {
       this.root,
       () => this.value,
       (e) => this.gesture(e),
-      (e) => this.key(e)
+      (e) => this.key(e),
+      () => this.menu()
     );
     this.cancelRotate = rotationHandle(
       this.root,
@@ -5829,6 +6461,7 @@ var DrawingObject = class {
   editing = false;
   frame;
   updateGrip;
+  alignGrip = () => this.updateGrip();
   cancelRotate;
   input = null;
   cancelGesture = null;
@@ -5841,6 +6474,54 @@ var DrawingObject = class {
     });
     this.frame.style.rotate = (p.rotation ?? 0) + "deg";
   }
+  setLayer = (layer) => this.change({ ...this.value, layer });
+  menu = () => {
+    this.select();
+    const actions = [
+      {
+        label: "Appearance and text size",
+        icon: "palette",
+        run: () => this.openSettings()
+      },
+      ...layerActions(this.selection, this),
+      { label: "Duplicate", icon: "copy", run: () => this.duplicate() },
+      { label: "Delete", icon: "trash-2", run: () => this.remove() }
+    ];
+    if (["sticky", "label", "text", "section", "table", "code"].includes(
+      this.value.kind
+    ))
+      actions.unshift({
+        label: "Edit text",
+        icon: "pencil",
+        run: () => this.editText()
+      });
+    if (this.value.kind !== "connector" && !this.value.sourceId && !this.value.targetId) {
+      actions.splice(
+        1,
+        0,
+        ...alignmentActions(
+          this.view.scrollDOM,
+          this.position,
+          (p) => this.change({ ...this.value, ...p })
+        ),
+        {
+          label: "Reset rotation",
+          icon: "rotate-ccw",
+          run: () => this.change({ ...this.value, rotation: 0 })
+        }
+      );
+    }
+    if (this.value.text)
+      actions.unshift({
+        label: "Copy text",
+        icon: "clipboard-copy",
+        run: () => copyText(this.value.text, (m) => new import_obsidian3.Notice(m))
+      });
+    actionMenu(
+      this.root.querySelector(".cv-object-grip"),
+      actions
+    );
+  };
   position = () => this.value;
   bounds = () => rotatedBounds(this.value);
   openSettings = () => this.properties("all");
@@ -5857,9 +6538,14 @@ var DrawingObject = class {
       width: value.width + "px",
       height: value.height + "px"
     });
-    this.root.style.zIndex = value.parentId ? "9" : "";
+    this.selection.refreshLayers();
     this.frame.style.rotate = (value.rotation ?? 0) + "deg";
+    this.root.classList.toggle(
+      "is-attached-connector",
+      value.kind === "connector" || !!value.sourceId || !!value.targetId
+    );
     this.updateGrip();
+    if (this.input) this.input.style.fontSize = (value.fontSize ?? 18) + "px";
     if (!this.editing && (!this.visual.firstChild || old !== value))
       this.render();
   }
@@ -6005,10 +6691,11 @@ var DrawingObject = class {
     this.toolbar.append(menu);
     if (type === "all") {
       menu.classList.add("cv-full-properties");
-      rotationField(menu, this.value.rotation ?? 0, (n) => {
-        this.change({ ...this.value, rotation: n });
-        this.selection.position();
-      });
+      if (this.value.kind !== "connector" && !this.value.sourceId && !this.value.targetId)
+        rotationField(menu, this.value.rotation ?? 0, (n) => {
+          this.change({ ...this.value, rotation: n });
+          this.selection.position();
+        });
       stylePanel(
         menu,
         this.value.kind,
@@ -6068,6 +6755,10 @@ var DrawingObject = class {
   }
   gesture(e, h) {
     if (e.button !== 0) return;
+    if (this.value.kind === "connector") {
+      this.select();
+      return;
+    }
     this.toolbar.querySelector(".cv-property-popover")?.remove();
     this.select();
     this.cancelGesture?.();
@@ -6077,11 +6768,12 @@ var DrawingObject = class {
       root: this.root,
       start,
       explicitHeight: true,
+      autoPan: !h,
       preview: (p) => this.children(p),
       finishPreview: () => this.children(null),
       project: (dx, dy) => h ? rotatedResize(start, dx, dy, h) : {
         ...start,
-        x: limit(start.x + dx, 0, 5e4),
+        x: limit(start.x + dx, -5e4, 5e4),
         y: limit(start.y + dy, 0, 5e4)
       },
       commit: (p) => {
@@ -6109,7 +6801,7 @@ var DrawingObject = class {
       ArrowUp: [0, -1],
       ArrowDown: [0, 1]
     };
-    if (!d[e.key]) return;
+    if (!d[e.key] || this.value.kind === "connector") return;
     e.preventDefault();
     e.stopPropagation();
     this.select();
@@ -6117,13 +6809,15 @@ var DrawingObject = class {
     this.change({
       ...this.value,
       ...h ? rotatedResize(this.value, dx, dy, h) : {
-        x: limit(this.value.x + dx, 0, 5e4),
+        x: limit(this.value.x + dx, -5e4, 5e4),
         y: limit(this.value.y + dy, 0, 5e4)
       }
     });
+    revealObject(this.view.scrollDOM, this.bounds());
     this.selection.position();
   }
   destroy() {
+    this.root.dispatchEvent(new Event("cv-destroy"));
     this.cancelRotate();
     if (this.editing && this.input && this.input.value !== this.value.text)
       this.recover(this.input.value);
@@ -6280,9 +6974,29 @@ function createSpatialExtension(host) {
         if (!effect.is(action)) continue;
         const a = effect.value;
         if (a.type === "add" && !value.pins.some((p) => a.pin.from < p.to && a.pin.to > p.from))
-          value = { ...value, enabled: true, pins: [...value.pins, a.pin] };
+          value = {
+            ...value,
+            enabled: true,
+            pins: [
+              ...value.pins,
+              {
+                ...a.pin,
+                layer: Math.max(
+                  0,
+                  ...value.pins.map((p) => p.layer ?? 0),
+                  ...value.drawings.map((d) => d.layer ?? 0)
+                ) + 1
+              }
+            ]
+          };
         if (a.type === "remove")
-          value = { ...value, pins: value.pins.filter((p) => p.id !== a.id) };
+          value = {
+            ...value,
+            pins: value.pins.filter((p) => p.id !== a.id),
+            drawings: value.drawings.filter(
+              (d) => d.sourceId !== a.id && d.targetId !== a.id
+            )
+          };
         if (a.type === "place")
           value = {
             ...value,
@@ -6290,9 +7004,25 @@ function createSpatialExtension(host) {
               (p) => p.id === a.id ? { ...p, ...a.placement } : p
             )
           };
+        if (a.type === "layers")
+          value = {
+            ...value,
+            pins: value.pins.map((p) => ({
+              ...p,
+              layer: a.layers[p.id] ?? p.layer
+            })),
+            drawings: value.drawings.map((d) => ({
+              ...d,
+              layer: a.layers[d.id] ?? d.layer
+            }))
+          };
         if (a.type === "toggle") value = { ...value, enabled: !value.enabled };
         if (a.type === "drawings")
-          value = { ...value, drawings: a.drawings, enabled: true };
+          value = {
+            ...value,
+            drawings: a.drawings,
+            enabled: true
+          };
         if (a.type === "reset")
           value = {
             ...value,
@@ -6301,6 +7031,15 @@ function createSpatialExtension(host) {
             drawings: [],
             enabled: true
           };
+      }
+      if (tr.docChanged) {
+        const removed = new Set(
+          old.pins.filter((p) => !value.pins.some((n) => n.id === p.id)).map((p) => p.id)
+        );
+        if (removed.size)
+          value.drawings = value.drawings.filter(
+            (d) => !removed.has(d.sourceId ?? "") && !removed.has(d.targetId ?? "")
+          );
       }
       const sourceRangesChanged = tr.docChanged || path !== old.path || effects.some(
         (e) => e.is(action) && ["add", "remove", "reset", "toggle"].includes(e.value.type)
@@ -6331,8 +7070,28 @@ function createSpatialExtension(host) {
         this.layer = document.createElement("div");
         this.layer.className = "cv-spatial-layer";
         this.layer.contentEditable = "false";
-        view.scrollDOM.append(this.layer);
-        this.selection = new Selection(view.scrollDOM);
+        this.camera = new ObjectCamera(
+          view.dom,
+          view.scrollDOM,
+          this.layer,
+          (x) => {
+            this.selection?.position();
+            const path = view.state.field(field).path, note = host.store.notes[path];
+            if (note) {
+              note.viewX = x;
+              host.scheduleSave();
+            }
+          }
+        );
+        view.dom.addEventListener("wheel", this.wheel, { passive: false });
+        this.controls = document.createElement("div");
+        this.controls.className = "cv-source-controls";
+        this.controls.contentEditable = "false";
+        view.dom.append(this.controls);
+        this.selection = new Selection(
+          view.scrollDOM,
+          (layers) => view.dispatch({ effects: action.of({ type: "layers", layers }) })
+        );
         this.tools = new DesignTools(
           view,
           this.layer,
@@ -6364,7 +7123,7 @@ function createSpatialExtension(host) {
               });
               host.scheduleSave();
               host.notify(
-                "An unfinished annotation draft was saved. Use Canvesidian: Recover interrupted block drafts."
+                "An unfinished annotation draft was saved. Use Canvsidian: Recover interrupted block drafts."
               );
             },
             setDrawings: (drawings) => view.dispatch({
@@ -6378,21 +7137,24 @@ function createSpatialExtension(host) {
         (0, import_obsidian4.setIcon)(this.handle, "grip-vertical");
         this.handle.title = "Drag this block out of the text flow";
         this.handle.setAttribute("aria-label", "Float block under pointer");
-        this.layer.append(this.handle);
+        this.controls.append(this.handle);
         this.handle.hidden = true;
-        this.handle.onpointerdown = (e) => {
-          if (e.button !== 0 || this.hoverPos === null) return;
-          e.preventDefault();
-          e.stopPropagation();
-          const pin = floatAt(view, host, this.hoverPos);
-          if (pin) {
-            const card = this.cards.get(pin.id);
-            card?.beginDrag(e, true);
-          }
+        this.handle.onpointerleave = (event) => {
+          if (!view.scrollDOM.contains(event.relatedTarget))
+            this.hideHover();
         };
-        this.handle.onclick = () => {
-          if (this.hoverPos !== null) floatAt(view, host, this.hoverPos);
-        };
+        this.cancelGrip = gripInteraction(
+          this.handle,
+          (e) => {
+            if (this.hoverPos === null) return;
+            const pin = floatAt(view, host, this.hoverPos);
+            if (pin) this.cards.get(pin.id)?.beginDrag(e, true);
+            this.hideHover();
+          },
+          () => this.sourceMenu()
+        );
+        view.scrollDOM.addEventListener("mousemove", this.onGutterMove);
+        view.scrollDOM.addEventListener("mouseleave", this.onGutterLeave);
         this.sync(true);
       }
       layer;
@@ -6404,9 +7166,26 @@ function createSpatialExtension(host) {
       cachedSource = "";
       savedPins = /* @__PURE__ */ new Map();
       hoverPos = null;
+      cancelGrip;
+      controls;
+      camera;
+      cameraPath = "";
+      wheel = (event) => {
+        const state = this.view.state.field(field);
+        if (!event.altKey || event.ctrlKey || event.metaKey || !state.enabled || !state.live || !state.pins.length && !state.drawings.length)
+          return;
+        event.preventDefault();
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? this.view.scrollDOM.clientWidth : 1;
+        this.camera.set(this.camera.x - (event.deltaX || event.deltaY) * unit);
+      };
       destroyed = false;
       hoverFrame = 0;
       hoverEvent = null;
+      onGutterMove = (event) => this.queueHover(event);
+      onGutterLeave = (event) => {
+        if (!this.handle.contains(event.relatedTarget))
+          this.hideHover();
+      };
       parsedDoc = null;
       parsedBlocks = [];
       update(update) {
@@ -6417,13 +7196,21 @@ function createSpatialExtension(host) {
           if (update.docChanged || before.pins !== next.pins || before.drawings !== next.drawings || before.enabled !== next.enabled || before.path !== next.path)
             this.persist();
         }
-        if (update.docChanged || update.viewportChanged)
-          this.handle.hidden = true;
+        if (update.docChanged || update.viewportChanged) this.hideHover();
       }
       sync(initial) {
         const state = this.view.state.field(field);
         const shown = state.enabled && state.live && !!state.path;
+        if (state.path !== this.cameraPath) {
+          this.cameraPath = state.path;
+          this.camera.set(host.store.notes[state.path]?.viewX ?? 0, false);
+        }
+        if (!state.pins.length && !state.drawings.length)
+          this.camera.set(0, false);
+        this.camera.viewport.hidden = !shown;
         this.layer.hidden = !shown;
+        this.camera.layout();
+        if (!shown) this.hideHover();
         for (const [id, card] of this.cards)
           if (!shown || !state.pins.some((p) => p.id === id)) {
             card.destroy();
@@ -6439,7 +7226,8 @@ function createSpatialExtension(host) {
                 pin,
                 this.layer,
                 () => this.persist(),
-                this.selection
+                this.selection,
+                (p) => this.tools.previewTarget(pin.id, p)
               );
               this.cards.set(pin.id, card);
               this.selection.select(card);
@@ -6447,10 +7235,11 @@ function createSpatialExtension(host) {
             if (card.pin !== pin || !card.root.style.width) card.update(pin);
           }
         this.tools.sync();
+        this.selection.refreshLayers();
         this.selection.position();
         if (initial && state.detached.length)
           host.notify(
-            `${state.detached.length} Canvesidian placement(s) could not be matched safely. Their text remains visible; saved placement has been retained.`
+            `${state.detached.length} Canvsidian placement(s) could not be matched safely. Their text remains visible; saved placement has been retained.`
           );
       }
       persist() {
@@ -6473,61 +7262,181 @@ function createSpatialExtension(host) {
         });
         host.store.notes[state.path] = {
           enabled: state.enabled,
+          viewX: this.camera.x,
           pins: [...saved, ...state.detached],
           drawings: state.drawings
         };
         host.scheduleSave();
       }
+      hideHover() {
+        cancelAnimationFrame(this.hoverFrame);
+        this.hoverFrame = 0;
+        this.hoverEvent = null;
+        this.handle.hidden = true;
+      }
+      sourceMenu() {
+        if (this.hoverPos === null) return;
+        const block = blockAt(this.view.state.doc.toString(), this.hoverPos);
+        if (!block) return;
+        const originalDoc = this.view.state.doc;
+        const valid = () => {
+          if (this.view.state.doc === originalDoc) return true;
+          host.notify(
+            "This block changed while its menu was open. Reopen the block menu before editing it."
+          );
+          return false;
+        };
+        const float = () => {
+          const p = floatAt(this.view, host, block.from);
+          return p ? this.cards.get(p.id) : void 0;
+        };
+        actionMenu(
+          this.handle,
+          [
+            {
+              label: "Edit block",
+              icon: "pencil",
+              run: () => {
+                this.view.dispatch({
+                  selection: { anchor: block.from },
+                  scrollIntoView: true
+                });
+                this.view.focus();
+              }
+            },
+            {
+              label: "Copy Markdown",
+              icon: "clipboard-copy",
+              run: () => copyText(
+                this.view.state.doc.sliceString(block.from, block.to),
+                (m) => host.notify(m)
+              )
+            },
+            {
+              label: "Select block text",
+              icon: "text-select",
+              run: () => {
+                this.view.dispatch({
+                  selection: { anchor: block.from, head: block.to },
+                  scrollIntoView: true
+                });
+                this.view.focus();
+              }
+            },
+            {
+              label: "Float and move",
+              icon: "move",
+              run: () => {
+                float();
+                this.hideHover();
+              }
+            },
+            {
+              label: "Text size and color",
+              icon: "palette",
+              run: () => {
+                float()?.openSettings();
+                this.hideHover();
+              }
+            },
+            {
+              label: "Duplicate",
+              icon: "copy",
+              run: () => this.view.dispatch({
+                changes: { from: block.to, insert: "\n\n" + block.text }
+              })
+            },
+            {
+              label: "Delete",
+              icon: "trash-2",
+              run: () => confirmAction(
+                host.app,
+                "Delete this block?",
+                "Remove this block's Markdown from this note. Use text undo to restore it.",
+                "Delete block",
+                () => {
+                  if (valid())
+                    this.view.dispatch({
+                      changes: { from: block.from, to: block.to }
+                    });
+                }
+              )
+            }
+          ].map((item) => ({
+            ...item,
+            run: () => {
+              if (valid()) item.run();
+            }
+          }))
+        );
+      }
       hover(event) {
         const state = this.view.state.field(field);
-        if (!state.enabled || !state.live || this.view.scrollDOM.classList.contains("cv-has-gesture"))
+        if (!state.enabled || !state.live || this.view.scrollDOM.classList.contains("cv-has-gesture")) {
+          this.hideHover();
           return;
-        if (!(event.target instanceof HTMLElement) || !event.target.closest(".cm-content") || event.target.closest(".cv-spatial-layer"))
+        }
+        if (event.target?.closest(".cv-float-handle,.menu"))
           return;
+        if (event.target?.closest(
+          ".cv-floating-block,.cv-drawing-object,.cv-tool-dock"
+        )) {
+          this.hideHover();
+          return;
+        }
+        const content2 = this.view.contentDOM.getBoundingClientRect();
+        const size = matchMedia("(pointer:coarse)").matches ? 44 : 28;
+        const gutter = rightGutter(this.view.scrollDOM) + this.view.scrollDOM.getBoundingClientRect().left - this.view.scrollDOM.scrollLeft;
+        if (event.clientX < gutter - 4 || event.clientX > gutter + size + 4) {
+          this.hideHover();
+          return;
+        }
         const pos = this.view.posAtCoords({
-          x: event.clientX,
+          x: Math.min(
+            content2.right - 4,
+            Math.max(content2.left + 4, event.clientX)
+          ),
           y: event.clientY
         });
-        if (pos === null) return;
+        if (pos === null) {
+          this.hideHover();
+          return;
+        }
         if (this.parsedDoc !== this.view.state.doc) {
           this.parsedDoc = this.view.state.doc;
           this.parsedBlocks = blocks(this.view.state.doc.toString());
         }
-        const block = this.parsedBlocks.find(
-          (b) => b.from <= pos && pos <= b.to
+        const lineBounds = (pos2) => {
+          const dom = this.view.domAtPos(pos2).node;
+          const el = dom instanceof Element ? dom : dom.parentElement;
+          return el?.closest(".cm-line")?.getBoundingClientRect();
+        };
+        let lo = 0, hi = this.parsedBlocks.length;
+        while (lo < hi) {
+          const mid = lo + hi >>> 1;
+          if (this.parsedBlocks[mid].from <= pos) lo = mid + 1;
+          else hi = mid;
+        }
+        const block = [this.parsedBlocks[lo - 1], this.parsedBlocks[lo]].find(
+          (b) => {
+            if (!b) return false;
+            const a = lineBounds(b.from) ?? this.view.coordsAtPos(b.from), z = lineBounds(b.to) ?? this.view.coordsAtPos(b.to);
+            return a && z && event.clientY >= a.top && event.clientY <= Math.max(a.bottom, z.bottom);
+          }
         );
         if (!block || state.pins.some((p) => block.from < p.to && block.to > p.from)) {
-          this.handle.hidden = true;
+          this.hideHover();
           return;
         }
-        const coords = this.view.coordsAtPos(block.from);
-        if (!coords) return;
-        const rect = this.view.scrollDOM.getBoundingClientRect();
-        this.hoverPos = pos;
-        let bounds = {
-          left: coords.left,
-          top: coords.top,
-          height: coords.bottom - coords.top
-        };
-        try {
-          const lineEnd2 = Math.min(
-            block.to,
-            this.view.state.doc.lineAt(block.from).to
-          );
-          const start = this.view.domAtPos(block.from), end = this.view.domAtPos(lineEnd2);
-          const range = document.createRange();
-          range.setStart(start.node, start.offset);
-          range.setEnd(end.node, end.offset);
-          const r = range.getBoundingClientRect();
-          if (r.width > 0 && r.height > 0) bounds = r;
-        } catch {
+        const first = lineBounds(block.from) ?? this.view.coordsAtPos(block.from), last = lineBounds(block.to) ?? this.view.coordsAtPos(block.to);
+        if (!first || !last || event.clientY < first.top || event.clientY > Math.max(first.bottom, last.bottom)) {
+          this.hideHover();
+          return;
         }
-        const size = matchMedia("(pointer:coarse)").matches ? 44 : 28;
-        this.handle.style.left = Math.max(
-          0,
-          bounds.left - rect.left + this.view.scrollDOM.scrollLeft - size - 8
-        ) + "px";
-        this.handle.style.top = bounds.top - rect.top + this.view.scrollDOM.scrollTop + (bounds.height - size) / 2 + "px";
+        const controls = this.controls.getBoundingClientRect();
+        this.hoverPos = block.from;
+        this.handle.style.left = gutter - controls.left + "px";
+        this.handle.style.top = (first.top + Math.max(first.bottom, last.bottom)) / 2 - controls.top - size / 2 + "px";
         this.handle.hidden = false;
       }
       queueHover(event) {
@@ -6544,8 +7453,19 @@ function createSpatialExtension(host) {
         this.persist();
         this.cards.forEach((c) => c.destroy());
         this.cards.clear();
+        this.view.scrollDOM.removeEventListener("mousemove", this.onGutterMove);
+        this.view.scrollDOM.removeEventListener(
+          "mouseleave",
+          this.onGutterLeave
+        );
+        this.layer.dispatchEvent(new Event("cv-destroy"));
+        this.controls.dispatchEvent(new Event("cv-destroy"));
+        this.controls.remove();
+        this.cancelGrip();
         this.tools.destroy();
-        this.layer.remove();
+        this.selection.destroy();
+        this.view.dom.removeEventListener("wheel", this.wheel);
+        this.camera.destroy();
         this.view.scrollDOM.classList.remove("cv-spatial-scroller");
         host.views.delete(this.view);
         fields.delete(this.view);
@@ -6553,6 +7473,12 @@ function createSpatialExtension(host) {
     },
     {
       eventHandlers: {
+        keydown() {
+          this.hideHover();
+        },
+        scroll() {
+          this.hideHover();
+        },
         mousemove(event) {
           this.queueHover(event);
         }
@@ -6600,15 +7526,19 @@ function floatAt(view, host, pos) {
   const at = view.coordsAtPos(block.from);
   const content2 = view.contentDOM.getBoundingClientRect();
   const width = limit(Math.min(content2.width - 32, 420), 200, 1200);
-  const rightMargin = content2.right - rect.left + view.scrollDOM.scrollLeft + 32;
-  const hasMargin = rightMargin + width <= view.scrollDOM.scrollLeft + rect.width - 16;
+  const camera = objectCameraX(view.scrollDOM);
+  const rightMargin = content2.right - rect.left - view.scrollDOM.clientLeft + view.scrollDOM.scrollLeft - camera + 32;
+  const hasMargin = rightMargin + width <= view.scrollDOM.scrollLeft - camera + view.scrollDOM.clientWidth - 16;
   const bottom = view.coordsAtPos(view.state.doc.length)?.bottom ?? at?.bottom ?? rect.top;
   const pin = {
     ...block,
     id: crypto.randomUUID(),
     x: limit(
-      hasMargin ? rightMargin : Math.max(16, content2.left - rect.left + view.scrollDOM.scrollLeft),
-      8,
+      hasMargin ? rightMargin : Math.max(
+        16 - camera,
+        content2.left - rect.left - view.scrollDOM.clientLeft + view.scrollDOM.scrollLeft - camera
+      ),
+      -5e4,
       5e4
     ),
     y: limit(
@@ -6630,16 +7560,19 @@ function floatAt(view, host, pos) {
   return pin;
 }
 var FloatingBlock = class {
-  constructor(view, host, pin, parent, persist, selection) {
+  constructor(view, host, pin, parent, persist, selection, previewConnections) {
     this.view = view;
     this.host = host;
     this.persist = persist;
     this.selection = selection;
+    this.previewConnections = previewConnections;
     this.pin = pin;
     this.id = pin.id;
+    this.selection.register(this);
     this.path = this.view.state.field(fields.get(this.view)).path;
     this.root = document.createElement("article");
     this.root.className = "cv-floating-block";
+    this.root.dataset.id = pin.id;
     this.root.setAttribute("aria-label", "Floating block in this note");
     this.root.contentEditable = "false";
     this.root.tabIndex = 0;
@@ -6716,7 +7649,8 @@ var FloatingBlock = class {
       this.root,
       () => this.pin,
       (e) => this.beginDrag(e),
-      (e) => this.nudge(e, false)
+      (e) => this.nudge(e, false),
+      () => this.menu()
     );
     this.cancelRotate = rotationHandle(
       this.root,
@@ -6729,7 +7663,8 @@ var FloatingBlock = class {
           placement: { rotation: n }
         });
         this.selection.position();
-      }
+      },
+      (p) => this.previewConnections(p)
     );
     this.resize = this.root.querySelector(".cv-handle-se");
     this.root.onpointerdown = (e) => {
@@ -6772,6 +7707,7 @@ var FloatingBlock = class {
   editButton;
   frame;
   updateGrip;
+  alignGrip = () => this.updateGrip();
   cancelRotate;
   commitDraft = null;
   dragging = false;
@@ -6797,10 +7733,17 @@ var FloatingBlock = class {
   update(pin) {
     this.pin = pin;
     this.frame.style.rotate = (pin.rotation ?? 0) + "deg";
-    this.updateGrip();
     this.root.style.left = pin.x + "px";
     this.root.style.top = pin.y + "px";
     this.root.style.width = pin.width + "px";
+    this.root.style.minHeight = pin.height + "px";
+    this.body.style.fontSize = pin.fontSize ? pin.fontSize + "px" : "";
+    this.body.style.color = pin.color ?? "";
+    this.body.style.background = pin.background ?? "";
+    if (this.textarea)
+      this.textarea.style.fontSize = pin.fontSize ? pin.fontSize + "px" : "";
+    this.updateGrip();
+    this.selection.refreshLayers();
     const source = pin.text;
     if (this.textarea) {
       if (source !== this.draftBase) {
@@ -6846,9 +7789,67 @@ var FloatingBlock = class {
       if (generation !== this.generation || this.textarea) return;
     } catch (e) {
       if (generation === this.generation) this.body.textContent = text;
-      console.error("Canvesidian block renderer", e);
+      console.error("Canvsidian block renderer", e);
     }
   }
+  setLayer = (layer) => this.dispatch({ type: "place", id: this.pin.id, placement: { layer } });
+  menu = () => {
+    this.select();
+    actionMenu(this.root.querySelector(".cv-object-grip"), [
+      { label: "Edit text", icon: "pencil", run: () => this.edit() },
+      {
+        label: "Text size and color",
+        icon: "palette",
+        run: () => this.openSettings()
+      },
+      {
+        label: "Copy Markdown",
+        icon: "clipboard-copy",
+        run: () => copyText(this.pin.text, (m) => this.host.notify(m))
+      },
+      ...alignmentActions(
+        this.view.scrollDOM,
+        this.position,
+        (p) => this.dispatch({ type: "place", id: this.pin.id, placement: p })
+      ),
+      {
+        label: "Reset rotation",
+        icon: "rotate-ccw",
+        run: () => this.dispatch({
+          type: "place",
+          id: this.pin.id,
+          placement: { rotation: 0 }
+        })
+      },
+      ...layerActions(this.selection, this),
+      {
+        label: "Duplicate",
+        icon: "copy",
+        run: () => this.view.dispatch({
+          changes: { from: this.pin.to, insert: "\n\n" + this.pin.text }
+        })
+      },
+      {
+        label: "Return to text flow",
+        icon: "corner-up-left",
+        run: () => this.dispatch({ type: "remove", id: this.pin.id })
+      },
+      {
+        label: "Return and edit source",
+        icon: "file-text",
+        run: () => {
+          const from = this.pin.from;
+          this.dispatch({ type: "remove", id: this.pin.id });
+          this.view.dispatch({
+            selection: { anchor: from },
+            scrollIntoView: true
+          });
+          this.view.focus();
+        }
+      },
+      { label: "Delete", icon: "trash-2", run: () => this.remove() }
+    ]);
+  };
   position = () => this.pin;
   bounds = () => rotatedBounds(this.pin);
   openSettings = () => {
@@ -6861,17 +7862,65 @@ var FloatingBlock = class {
     label.textContent = "Width";
     const input = document.createElement("input");
     input.type = "number";
-    input.min = "200";
-    input.max = "1200";
+    input.min = "120";
+    input.max = "4000";
     input.value = String(Math.round(this.pin.width));
     input.setAttribute("aria-label", "Text block width");
     input.onchange = () => this.dispatch({
       type: "place",
       id: this.pin.id,
-      placement: { width: limit(Number(input.value) || 200, 200, 1200) }
+      placement: { width: limit(Number(input.value) || 200, 120, 4e3) }
     });
     label.append(input);
     menu.append(label);
+    const number2 = (name2, value, min, max, key) => {
+      const label2 = document.createElement("label");
+      label2.textContent = name2;
+      const input2 = document.createElement("input");
+      input2.type = "number";
+      input2.min = String(min);
+      input2.max = String(max);
+      input2.value = String(value);
+      input2.setAttribute("aria-label", name2);
+      input2.onchange = () => this.dispatch({
+        type: "place",
+        id: this.pin.id,
+        placement: { [key]: limit(Number(input2.value) || min, min, max) }
+      });
+      label2.append(input2);
+      menu.append(label2);
+    };
+    number2("Text font size", this.pin.fontSize ?? 16, 12, 144, "fontSize");
+    number2("Text block height", this.pin.height, 28, 1e4, "height");
+    for (const key of ["color", "background"]) {
+      const label2 = document.createElement("label");
+      label2.textContent = key === "color" ? "Text color" : "Background color";
+      const input2 = document.createElement("input");
+      input2.type = "color";
+      input2.value = this.pin[key]?.startsWith("#") ? this.pin[key] : key === "color" ? "#2783DE" : "#FFF0AD";
+      input2.setAttribute("aria-label", label2.textContent);
+      input2.onchange = () => this.dispatch({
+        type: "place",
+        id: this.pin.id,
+        placement: { [key]: input2.value }
+      });
+      label2.append(input2);
+      menu.append(label2);
+    }
+    iconButton(
+      menu,
+      "rotate-ccw",
+      "Reset text appearance",
+      () => this.dispatch({
+        type: "place",
+        id: this.pin.id,
+        placement: {
+          fontSize: void 0,
+          color: void 0,
+          background: void 0
+        }
+      })
+    );
     rotationField(menu, this.pin.rotation ?? 0, (n) => {
       this.dispatch({
         type: "place",
@@ -7013,8 +8062,8 @@ var FloatingBlock = class {
         id: this.pin.id,
         placement: {
           x: limit(
-            event.clientX - rect.left + this.view.scrollDOM.scrollLeft + 24,
-            0,
+            event.clientX - rect.left - this.view.scrollDOM.clientLeft + this.view.scrollDOM.scrollLeft - objectCameraX(this.view.scrollDOM) + 24,
+            -5e4,
             5e4
           ),
           y: limit(
@@ -7040,11 +8089,12 @@ var FloatingBlock = class {
     this.dispatch({
       type: "place",
       id: this.pin.id,
-      placement: resize ? { width: limit(this.pin.width + dx, 200, 1200) } : {
-        x: limit(this.pin.x + dx, 0, 5e4),
+      placement: resize ? { width: limit(this.pin.width + dx, 120, 4e3) } : {
+        x: limit(this.pin.x + dx, -5e4, 5e4),
         y: limit(this.pin.y + dy, 0, 5e4)
       }
     });
+    revealObject(this.view.scrollDOM, this.bounds());
   }
   drag(e, handle) {
     if (e.button !== 0) return;
@@ -7056,20 +8106,18 @@ var FloatingBlock = class {
       scroller: this.view.scrollDOM,
       root: this.root,
       start,
+      explicitHeight: true,
+      autoPan: !handle,
+      preview: (p) => this.previewConnections(p),
+      finishPreview: () => this.previewConnections(null),
       project: (dx, dy) => {
         if (!handle)
           return {
             ...start,
-            x: limit(start.x + dx, 0, 5e4),
+            x: limit(start.x + dx, -5e4, 5e4),
             y: limit(start.y + dy, 0, 5e4)
           };
-        const horizontal = handle.includes("w") ? "w" : "e";
-        const next = rotatedResize(start, dx, dy, horizontal, 200, 24);
-        return {
-          ...next,
-          y: start.rotation ? next.y : start.y,
-          height: start.height
-        };
+        return rotatedResize(start, dx, dy, handle, 120, 28);
       },
       commit: (p) => {
         this.dispatch({
@@ -7080,7 +8128,7 @@ var FloatingBlock = class {
             y: p.y,
             width: p.width,
             rotation: p.rotation,
-            height: Math.ceil(this.root.offsetHeight)
+            height: p.height
           }
         });
         this.selection.position();
@@ -7092,6 +8140,7 @@ var FloatingBlock = class {
     });
   }
   destroy() {
+    this.root.dispatchEvent(new Event("cv-destroy"));
     this.cancelRotate();
     if (this.textarea && this.textarea.value !== this.draftBase) {
       const path = this.path;
@@ -7106,7 +8155,7 @@ var FloatingBlock = class {
         });
         this.host.scheduleSave();
         this.host.notify(
-          "An interrupted block draft was saved. Use Canvesidian: Recover interrupted block drafts to copy it."
+          "An interrupted block draft was saved. Use Canvsidian: Recover interrupted block drafts to copy it."
         );
       }
     }
@@ -7145,7 +8194,7 @@ function preferenceControls(container, host) {
   p.textContent = "Effects visibility is per note and non-destructive. Reset is separate and asks for confirmation. Images are copied into the vault; deleting their annotation does not delete the image file.";
   container.append(p);
 }
-var CanvesidianSettings = class extends import_obsidian5.PluginSettingTab {
+var CanvsidianSettings = class extends import_obsidian5.PluginSettingTab {
   constructor(app, plugin, host) {
     super(app, plugin);
     this.host = host;
@@ -7158,7 +8207,7 @@ var CanvesidianSettings = class extends import_obsidian5.PluginSettingTab {
 function openPreferences(app, host) {
   class Preferences extends import_obsidian5.Modal {
     onOpen() {
-      this.titleEl.textContent = "Canvesidian settings";
+      this.titleEl.textContent = "Canvsidian settings";
       preferenceControls(this.contentEl, host);
     }
     onClose() {
@@ -7213,7 +8262,7 @@ function imageURL(app, path) {
 }
 
 // src/main.ts
-var Canvesidian = class extends import_obsidian7.Plugin {
+var Canvsidian = class extends import_obsidian7.Plugin {
   store = { version: 5, notes: {} };
   views = /* @__PURE__ */ new Set();
   dataReady = false;
@@ -7227,7 +8276,7 @@ var Canvesidian = class extends import_obsidian7.Plugin {
       return;
     }
     this.dataReady = true;
-    this.addSettingTab(new CanvesidianSettings(this.app, this, this));
+    this.addSettingTab(new CanvsidianSettings(this.app, this, this));
     this.registerEditorExtension(createSpatialExtension(this));
     this.addCommand({
       id: "recover-interrupted-drafts",
@@ -7328,7 +8377,7 @@ var Canvesidian = class extends import_obsidian7.Plugin {
       await this.writes;
     } catch (e) {
       console.error(e);
-      new import_obsidian7.Notice("Canvesidian could not save placement. Check vault storage.");
+      new import_obsidian7.Notice("Canvsidian could not save placement. Check vault storage.");
     }
   }
   onunload() {

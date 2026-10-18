@@ -43,7 +43,7 @@ export function preferenceControls(
     "Effects visibility is per note and non-destructive. Reset is separate and asks for confirmation. Images are copied into the vault; deleting their annotation does not delete the image file.";
   container.append(p);
 }
-export class CanvesidianSettings extends PluginSettingTab {
+export class CanvsidianSettings extends PluginSettingTab {
   constructor(
     app: App,
     plugin: Plugin,
@@ -59,7 +59,7 @@ export class CanvesidianSettings extends PluginSettingTab {
 export function openPreferences(app: App, host: PreferenceHost) {
   class Preferences extends Modal {
     onOpen() {
-      this.titleEl.textContent = "Canvesidian settings";
+      this.titleEl.textContent = "Canvsidian settings";
       preferenceControls(this.contentEl, host);
     }
     onClose() {

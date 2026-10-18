@@ -1,4 +1,6 @@
-import { App, Modal, setIcon } from "obsidian";
+import { objectCameraX, setObjectCamera, revealObject } from "./object-camera";
+import { routeConnector, targetAt, Target } from "./connectors";
+import { App, Modal, Notice, setIcon } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import {
   Drawing,
@@ -23,6 +25,10 @@ import {
   leftGrip,
   rotationField,
   rotationHandle,
+  actionMenu,
+  alignmentActions,
+  copyText,
+  layerActions,
 } from "./interaction";
 
 import {
@@ -73,6 +79,7 @@ export interface DesignCallbacks {
     enabled: boolean;
     live: boolean;
     drawings: Drawing[];
+    pins: (Placement & { id: string })[];
   };
   setDrawings: (next: Drawing[]) => void;
   reset: () => void;
@@ -158,12 +165,12 @@ export function drawingSVG(d: Drawing) {
   shape.setAttribute("vector-effect", "non-scaling-stroke");
   shape.setAttribute("opacity", String(d.opacity));
   svg.append(shape);
-  if (d.kind === "arrow") {
+  if (d.kind === "arrow" || d.kind === "connector") {
     const pts = d.points ?? [
       [0, 0],
       [1, 1],
     ];
-    const a = pts[0],
+    const a = pts[pts.length - 2],
       b = pts[pts.length - 1];
     const angle = Math.atan2((b[1] - a[1]) * d.height, (b[0] - a[0]) * d.width);
     const size = Math.max(12, d.strokeWidth * 3);
@@ -193,6 +200,10 @@ export class DesignTools {
   private history: Drawing[][] = [];
   private future: Drawing[][] = [];
   private path = "";
+  private connectorStart: string | null = null;
+  private routePins: Target[] | null = null;
+  private routeDrawings: Drawing[] | null = null;
+  private routed = new Map<string, Drawing>();
   private options = new Map<string, ToolStyle>();
   private tray: HTMLElement;
   private outside: (e: PointerEvent) => void;
@@ -233,19 +244,67 @@ export class DesignTools {
       () => this.setMode("select"),
     );
     select.dataset.tool = "select";
+    const objectView = iconButton(this.dock, "hand", "Object view", () =>
+      actionMenu(objectView, [
+        {
+          label: "View space to the left",
+          icon: "arrow-left",
+          run: () =>
+            setObjectCamera(
+              view.scrollDOM,
+              objectCameraX(view.scrollDOM) + view.scrollDOM.clientWidth / 2,
+            ),
+        },
+        {
+          label: "Show selected object",
+          icon: "focus",
+          run: () => {
+            const item = this.selection.current;
+            if (item)
+              revealObject(view.scrollDOM, item.bounds?.() ?? item.position());
+            else this.cb.notify("Select an object first.");
+          },
+        },
+        {
+          label: "Reset object view",
+          icon: "focus",
+          run: () => setObjectCamera(view.scrollDOM, 0),
+        },
+        {
+          label: "View space to the right",
+          icon: "arrow-right",
+          run: () =>
+            setObjectCamera(
+              view.scrollDOM,
+              objectCameraX(view.scrollDOM) - view.scrollDOM.clientWidth / 2,
+            ),
+        },
+      ]),
+    );
+    objectView.title =
+      "Object view · Alt+wheel to pan objects without moving the note";
     const groups = [
-      ["Draw tools", "pencil", ["pen", "highlighter", "tape"]],
+      ["Draw tools", "pen-tool", ["pen", "highlighter"]],
       [
         "Shapes and lines",
         "shapes",
-        ["rect", "ellipse", "diamond", "triangle", "line", "arrow"],
+        [
+          "rect",
+          "ellipse",
+          "diamond",
+          "triangle",
+          "line",
+          "arrow",
+          "connector",
+          "tape",
+        ],
       ],
       [
         "Notes and labels",
         "sticky-note",
         ["sticky", "label", "text", "section", "table", "code"],
       ],
-      ["Stickers", "stamp", ["sticker"]],
+      ["Stickers", "smile", ["sticker"]],
       ["Images and icons", "image-plus", ["image", "icon"]],
     ] as const;
     for (const [label, icon, modes] of groups) {
@@ -255,19 +314,12 @@ export class DesignTools {
       b.dataset.group = label;
       b.setAttribute("aria-expanded", "false");
     }
-    iconButton(this.dock, "sliders-horizontal", "Tool settings", () => {
-      if (this.mode === "select") {
-        if (this.selection.current?.openSettings)
-          this.selection.current.openSettings();
-        else this.cb.openPreferences();
-      } else this.openOptions();
-    });
     iconButton(this.dock, "settings", "Plugin settings", () =>
       this.cb.openPreferences(),
     );
     const toggle = iconButton(
       this.dock,
-      "wand-sparkles",
+      "toggle-right",
       "Toggle note effects",
       () => this.cb.toggle(),
     );
@@ -313,7 +365,7 @@ export class DesignTools {
       if (!(e.target instanceof Element)) return;
       if (
         !e.target.closest(
-          ".cv-floating-block,.cv-drawing-object,.cv-tool-dock,.cv-context-toolbar",
+          ".cv-floating-block,.cv-drawing-object,.cv-tool-dock,.cv-context-toolbar,.menu",
         )
       )
         this.selection.select(null);
@@ -322,9 +374,44 @@ export class DesignTools {
     this.cleanups.push(() =>
       view.dom.removeEventListener("pointerdown", deselect),
     );
+    const outsideEditor = (e: PointerEvent) => {
+      if (
+        (e.target as Element)?.closest(
+          ".modal-container,.modal,.test-modal-backdrop,.menu",
+        )
+      )
+        return;
+      if (!view.dom.contains(e.target as Node)) this.selection.select(null);
+    };
+    view.dom.ownerDocument.addEventListener("pointerdown", outsideEditor, true);
+    this.cleanups.push(() =>
+      view.dom.ownerDocument.removeEventListener(
+        "pointerdown",
+        outsideEditor,
+        true,
+      ),
+    );
     const key = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.closest("textarea,input,select,.cm-content")) return;
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        ["BracketLeft", "BracketRight"].includes(e.code) &&
+        this.selection.current
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selection.reorder(
+          e.code === "BracketRight"
+            ? e.shiftKey
+              ? "front"
+              : "forward"
+            : e.shiftKey
+              ? "back"
+              : "backward",
+        );
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -365,6 +452,7 @@ export class DesignTools {
     triangle: "Draw triangle",
     line: "Draw line",
     arrow: "Draw arrow",
+    connector: "Connect objects",
     sticky: "Add sticky note",
     label: "Add label",
     text: "Add text annotation",
@@ -388,13 +476,14 @@ export class DesignTools {
     const icons: Record<string, string> = {
       pen: "pencil",
       highlighter: "highlighter",
-      tape: "tape",
+      tape: "ticket",
       rect: "square",
       ellipse: "circle",
       diamond: "diamond",
       triangle: "triangle",
       line: "minus",
       arrow: "arrow-up-right",
+      connector: "workflow",
       sticky: "sticky-note",
       label: "tag",
       text: "type",
@@ -451,7 +540,10 @@ export class DesignTools {
           ...asset,
           id: crypto.randomUUID(),
           kind: "image",
-          x: s.scrollLeft + Math.max(40, (s.clientWidth - asset.width) / 2),
+          x:
+            s.scrollLeft -
+            objectCameraX(s) +
+            Math.max(40, (s.clientWidth - asset.width) / 2),
           y: s.scrollTop + 100,
         };
         this.commit([...state.drawings, value]);
@@ -503,10 +595,17 @@ export class DesignTools {
   setMode(mode: string) {
     if (mode !== this.mode) this.disposeDrawing?.();
     this.mode = mode;
+    this.connectorStart = null;
+    this.layer
+      .querySelectorAll(".is-connector-source,.is-connector-target")
+      .forEach((e) =>
+        e.classList.remove("is-connector-source", "is-connector-target"),
+      );
     const groupFor: Record<string, string> = {
       pen: "Draw tools",
       highlighter: "Draw tools",
-      tape: "Draw tools",
+      tape: "Shapes and lines",
+      connector: "Shapes and lines",
       rect: "Shapes and lines",
       ellipse: "Shapes and lines",
       diamond: "Shapes and lines",
@@ -567,6 +666,11 @@ export class DesignTools {
       '[aria-label="Toggle note effects"]',
     );
     toggle?.setAttribute("aria-pressed", String(state.enabled));
+    toggle?.setAttribute(
+      "title",
+      state.enabled ? "Disable note effects" : "Enable note effects",
+    );
+    if (toggle) setIcon(toggle, state.enabled ? "toggle-right" : "toggle-left");
     const prefs = this.cb.getPreferences();
     this.view.scrollDOM.classList.toggle("cv-dot-grid", show && prefs.dotGrid);
     this.view.scrollDOM.style.setProperty(
@@ -583,8 +687,21 @@ export class DesignTools {
         obj.destroy();
         this.shapes.delete(id);
       }
+    if (
+      state.pins !== this.routePins ||
+      state.drawings !== this.routeDrawings
+    ) {
+      this.routePins = state.pins;
+      this.routeDrawings = state.drawings;
+      this.routed.clear();
+      const targets = this.targets();
+      for (const d of state.drawings)
+        if (d.kind === "connector" || d.sourceId || d.targetId)
+          this.routed.set(d.id, routeConnector(d, targets));
+    }
     if (show)
-      for (const d of state.drawings) {
+      for (const saved of state.drawings) {
+        const d = this.routed.get(saved.id) ?? saved;
         let object = this.shapes.get(d.id);
         if (!object) {
           object = new DrawingObject(
@@ -612,6 +729,7 @@ export class DesignTools {
         button.disabled =
           label === "Undo drawing" ? !this.history.length : !this.future.length;
     }
+    this.selection.refreshLayers();
     this.selection.position();
   }
   change(value: Drawing) {
@@ -637,7 +755,20 @@ export class DesignTools {
       ),
     );
   }
+  previewTarget(id: string, placement: Placement | null) {
+    const targets = this.targets().map((t) =>
+      t.id === id && placement ? { ...t, ...placement } : t,
+    );
+    for (const obj of this.shapes.values())
+      if (
+        obj.value.kind === "connector" ||
+        obj.value.sourceId ||
+        obj.value.targetId
+      )
+        obj.update(routeConnector(obj.value, targets));
+  }
   private previewChildren(id: string, placement: Placement | null) {
+    this.previewTarget(id, placement);
     const parent = this.shapes.get(id);
     if (!parent) return;
     for (const child of this.shapes.values())
@@ -676,7 +807,7 @@ export class DesignTools {
     const next = {
       ...old,
       id: crypto.randomUUID(),
-      x: limit(old.x + 32, 0, 50000),
+      x: limit(old.x + 32, -50000, 50000),
       y: limit(old.y + 32, 0, 50000),
       parentId: undefined,
     };
@@ -685,13 +816,29 @@ export class DesignTools {
   }
   remove(id: string) {
     this.commit(
-      this.cb.read().drawings.filter((d) => d.id !== id && d.parentId !== id),
+      this.cb
+        .read()
+        .drawings.filter(
+          (d) =>
+            d.id !== id &&
+            d.parentId !== id &&
+            d.sourceId !== id &&
+            d.targetId !== id,
+        ),
     );
     this.dock
       .querySelector<HTMLButtonElement>("[data-tool=select]")
       ?.focus({ preventScroll: true });
   }
   private commit(next: Drawing[]) {
+    const state = this.cb.read(),
+      ids = new Set(state.drawings.map((d) => d.id));
+    let top = Math.max(
+      0,
+      ...state.pins.map((p) => p.layer ?? 0),
+      ...state.drawings.map((d) => d.layer ?? 0),
+    );
+    next = next.map((d) => (ids.has(d.id) ? d : { ...d, layer: ++top }));
     this.history.push(this.cb.read().drawings);
     if (this.history.length > 40) this.history.shift();
     this.future = [];
@@ -712,9 +859,65 @@ export class DesignTools {
   private point(e: PointerEvent): [number, number] {
     const rect = this.view.scrollDOM.getBoundingClientRect();
     return [
-      limit(e.clientX - rect.left + this.view.scrollDOM.scrollLeft, 0, 50000),
+      limit(
+        e.clientX -
+          rect.left -
+          this.view.scrollDOM.clientLeft +
+          this.view.scrollDOM.scrollLeft -
+          objectCameraX(this.view.scrollDOM),
+        -50000,
+        50000,
+      ),
       limit(e.clientY - rect.top + this.view.scrollDOM.scrollTop, 0, 50000),
     ];
+  }
+  private targets(): Target[] {
+    const state = this.cb.read();
+    return [
+      ...state.pins,
+      ...state.drawings.filter(
+        (d) => !["connector", "line", "arrow", "pen", "tape"].includes(d.kind),
+      ),
+    ];
+  }
+  private connectAt(event: PointerEvent) {
+    const target = targetAt(this.point(event), this.targets());
+    if (!target) {
+      this.cb.notify("Click a shape or text block to connect it.");
+      return;
+    }
+    if (!this.connectorStart) {
+      this.connectorStart = target.id;
+      this.layer
+        .querySelectorAll<HTMLElement>(".cv-drawing-object,.cv-floating-block")
+        .forEach((el) =>
+          el.classList.toggle(
+            "is-connector-source",
+            el.dataset.id === target.id,
+          ),
+        );
+      this.cb.notify("Now click the destination object.");
+      return;
+    }
+    if (this.connectorStart === target.id) return;
+    const sourceId = this.connectorStart;
+    const value = routeConnector(
+      {
+        ...this.settings(),
+        id: crypto.randomUUID(),
+        kind: "connector",
+        sourceId,
+        targetId: target.id,
+        x: 0,
+        y: 0,
+        width: 2,
+        height: 2,
+      },
+      this.targets(),
+    );
+    this.commit([...this.cb.read().drawings, value]);
+    this.setMode("select");
+    this.selection.select(this.shapes.get(value.id) ?? null);
   }
   private beginDrawing(event: PointerEvent) {
     if (event.button !== 0 || this.mode === "select") return;
@@ -723,6 +926,10 @@ export class DesignTools {
     this.disposeDrawing?.();
     this.tray.hidden = true;
     const mode = this.mode;
+    if (mode === "connector") {
+      this.connectAt(event);
+      return;
+    }
     const settings = { ...this.settings() };
     if (
       [
@@ -878,6 +1085,7 @@ class DrawingObject implements Selectable {
   private editing = false;
   private frame: HTMLElement;
   private updateGrip: () => void;
+  alignGrip = () => this.updateGrip();
   private cancelRotate: () => void;
   private input: HTMLTextAreaElement | null = null;
   private cancelGesture: (() => void) | null = null;
@@ -895,8 +1103,10 @@ class DrawingObject implements Selectable {
     private children: (p: Placement | null) => void,
   ) {
     this.id = value.id;
+    this.selection.register(this);
     this.root = document.createElement("div");
     this.root.className = "cv-drawing-object";
+    this.root.dataset.id = value.id;
     this.root.tabIndex = 0;
     this.root.onfocus = () => this.selection.select(this);
     this.root.addEventListener("focusin", () => this.selection.select(this));
@@ -963,6 +1173,7 @@ class DrawingObject implements Selectable {
       () => this.value,
       (e) => this.gesture(e),
       (e) => this.key(e),
+      () => this.menu(),
     );
     this.cancelRotate = rotationHandle(
       this.root,
@@ -1013,6 +1224,58 @@ class DrawingObject implements Selectable {
     });
     this.frame.style.rotate = (p.rotation ?? 0) + "deg";
   }
+  setLayer = (layer: number) => this.change({ ...this.value, layer });
+  menu = () => {
+    this.select();
+    const actions = [
+      {
+        label: "Appearance and text size",
+        icon: "palette",
+        run: () => this.openSettings(),
+      },
+      ...layerActions(this.selection, this),
+      { label: "Duplicate", icon: "copy", run: () => this.duplicate() },
+      { label: "Delete", icon: "trash-2", run: () => this.remove() },
+    ];
+    if (
+      ["sticky", "label", "text", "section", "table", "code"].includes(
+        this.value.kind,
+      )
+    )
+      actions.unshift({
+        label: "Edit text",
+        icon: "pencil",
+        run: () => this.editText(),
+      });
+    if (
+      this.value.kind !== "connector" &&
+      !this.value.sourceId &&
+      !this.value.targetId
+    ) {
+      actions.splice(
+        1,
+        0,
+        ...alignmentActions(this.view.scrollDOM, this.position, (p) =>
+          this.change({ ...this.value, ...p }),
+        ),
+        {
+          label: "Reset rotation",
+          icon: "rotate-ccw",
+          run: () => this.change({ ...this.value, rotation: 0 }),
+        },
+      );
+    }
+    if (this.value.text)
+      actions.unshift({
+        label: "Copy text",
+        icon: "clipboard-copy",
+        run: () => copyText(this.value.text!, (m) => new Notice(m)),
+      });
+    actionMenu(
+      this.root.querySelector<HTMLElement>(".cv-object-grip")!,
+      actions,
+    );
+  };
   position = () => this.value;
   bounds = () => rotatedBounds(this.value);
   openSettings = () => this.properties("all");
@@ -1029,9 +1292,14 @@ class DrawingObject implements Selectable {
       width: value.width + "px",
       height: value.height + "px",
     });
-    this.root.style.zIndex = value.parentId ? "9" : "";
+    this.selection.refreshLayers();
     this.frame.style.rotate = (value.rotation ?? 0) + "deg";
+    this.root.classList.toggle(
+      "is-attached-connector",
+      value.kind === "connector" || !!value.sourceId || !!value.targetId,
+    );
     this.updateGrip();
+    if (this.input) this.input.style.fontSize = (value.fontSize ?? 18) + "px";
     // Changes to geometry do not replace an in-progress text editor.
     if (!this.editing && (!this.visual.firstChild || old !== value))
       this.render();
@@ -1197,10 +1465,15 @@ class DrawingObject implements Selectable {
     this.toolbar.append(menu);
     if (type === "all") {
       menu.classList.add("cv-full-properties");
-      rotationField(menu, this.value.rotation ?? 0, (n) => {
-        this.change({ ...this.value, rotation: n });
-        this.selection.position();
-      });
+      if (
+        this.value.kind !== "connector" &&
+        !this.value.sourceId &&
+        !this.value.targetId
+      )
+        rotationField(menu, this.value.rotation ?? 0, (n) => {
+          this.change({ ...this.value, rotation: n });
+          this.selection.position();
+        });
       stylePanel(menu, this.value.kind, drawingStyle(this.value), (patch) =>
         this.change({ ...this.value, ...patch }),
       );
@@ -1259,6 +1532,10 @@ class DrawingObject implements Selectable {
   }
   private gesture(e: PointerEvent, h?: Handle) {
     if (e.button !== 0) return;
+    if (this.value.kind === "connector") {
+      this.select();
+      return;
+    }
     this.toolbar.querySelector(".cv-property-popover")?.remove();
     this.select();
     this.cancelGesture?.();
@@ -1268,6 +1545,7 @@ class DrawingObject implements Selectable {
       root: this.root,
       start,
       explicitHeight: true,
+      autoPan: !h,
       preview: (p) => this.children(p),
       finishPreview: () => this.children(null),
       project: (dx, dy) =>
@@ -1275,7 +1553,7 @@ class DrawingObject implements Selectable {
           ? rotatedResize(start, dx, dy, h)
           : {
               ...start,
-              x: limit(start.x + dx, 0, 50000),
+              x: limit(start.x + dx, -50000, 50000),
               y: limit(start.y + dy, 0, 50000),
             },
       commit: (p) => {
@@ -1303,7 +1581,7 @@ class DrawingObject implements Selectable {
       ArrowUp: [0, -1],
       ArrowDown: [0, 1],
     };
-    if (!d[e.key]) return;
+    if (!d[e.key] || this.value.kind === "connector") return;
     e.preventDefault();
     e.stopPropagation();
     this.select();
@@ -1313,13 +1591,15 @@ class DrawingObject implements Selectable {
       ...(h
         ? rotatedResize(this.value, dx, dy, h)
         : {
-            x: limit(this.value.x + dx, 0, 50000),
+            x: limit(this.value.x + dx, -50000, 50000),
             y: limit(this.value.y + dy, 0, 50000),
           }),
     });
+    revealObject(this.view.scrollDOM, this.bounds());
     this.selection.position();
   }
   destroy() {
+    this.root.dispatchEvent(new Event("cv-destroy"));
     this.cancelRotate();
     if (this.editing && this.input && this.input.value !== this.value.text)
       this.recover(this.input.value);

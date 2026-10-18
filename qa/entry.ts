@@ -7,7 +7,7 @@ import {
   undo,
   redo,
 } from "@codemirror/commands";
-import Canvesidian from "../src/main";
+import Canvsidian from "../src/main";
 import {
   editorInfoField,
   editorLivePreviewField,
@@ -21,7 +21,7 @@ w.notices = [];
 w.commands = [];
 w.leafCreates = 0;
 w.fileWrites = 0;
-const plugin = new Canvesidian() as any;
+const plugin = new Canvsidian() as any;
 plugin.app = {
   workspace: {
     on: () => {},
@@ -94,15 +94,15 @@ w.remount = async () => {
   plugin.store = normalize(w.saved);
   mount(source);
 };
-w.reset = () => {
+w.reset = (doc = original) => {
   w.view.destroy();
   plugin.store.notes = {};
-  mount(original);
+  mount(doc);
 };
 w.testFutureData = async () => {
   const before = w.saved;
   w.saved = { version: 99, precious: "keep" };
-  const blocked = new Canvesidian() as any;
+  const blocked = new Canvsidian() as any;
   blocked.app = plugin.app;
   await blocked.onload();
   blocked.onunload();

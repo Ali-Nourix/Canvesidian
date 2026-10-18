@@ -888,5 +888,194 @@
   background: transparent;
 }
 .cv-text-frame {
-  background: var(--background-primary);
+  background: transparent;
+}
+
+/* 0.6 — quiet action gutters and theme-aware feedback. */
+.cv-design-editor {
+  --cv-selection: var(--interactive-accent, #2783de);
+  --cv-soft: color-mix(
+    in srgb,
+    var(--interactive-accent, #2783de) 12%,
+    transparent
+  );
+}
+.cv-object-grip {
+  opacity: 0 !important;
+}
+.cv-object-grip:hover,
+.cv-object-grip:focus-visible,
+.cv-object-grip:active {
+  opacity: 1 !important;
+}
+.cv-float-handle {
+  background: transparent;
+  color: var(--text-muted);
+  z-index: 30;
+}
+/* Rotation is revealed only in its own hit area or by keyboard focus. */
+.is-selected > .cv-rotated-frame > .cv-rotation-handle {
+  display: inline-flex;
+  opacity: 0;
+}
+.is-selected > .cv-rotated-frame > .cv-rotation-handle:hover,
+.is-selected > .cv-rotated-frame > .cv-rotation-handle:focus-visible,
+.cv-rotation-handle:active {
+  opacity: 1;
+}
+.cv-sticker-grid {
+  max-height: 220px;
+  overflow-y: auto;
+}
+.cv-tool-dock {
+  gap: 4px;
+  padding: 7px;
+  border-radius: 14px;
+  box-shadow: 0 4px 20px #0002;
+}
+.cv-tool-dock > .cv-icon-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+.cv-tool-dock > .cv-icon-button svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.8;
+}
+.cv-icon-button[aria-pressed="true"] {
+  color: var(--interactive-accent, #2783de);
+}
+.is-attached-connector > .cv-rotated-frame > .cv-resize-handle,
+.is-attached-connector > .cv-rotated-frame > .cv-rotation-handle {
+  display: none !important;
+}
+.is-connector-source > .cv-rotated-frame {
+  outline: 2px dashed var(--interactive-accent, #2783de);
+}
+/* Rendering respects object font size rather than inheriting the host's fixed paragraph size. */
+.cv-floating-body p,
+.cv-floating-body li {
+  font-size: inherit;
+}
+.cv-floating-body {
+  min-height: inherit;
+}
+.cv-text-frame {
+  min-height: inherit;
+}
+.is-attached-connector,
+.is-attached-connector > .cv-rotated-frame,
+.is-attached-connector .cv-drawing-visual,
+.is-attached-connector .cv-vector {
+  pointer-events: none;
+}
+.is-attached-connector .cv-vector path {
+  pointer-events: stroke;
+}
+.is-attached-connector > .cv-context-toolbar,
+.is-attached-connector > .cv-object-grip {
+  pointer-events: auto;
+}
+.is-drawing-mode .is-attached-connector .cv-vector path {
+  pointer-events: none;
+}
+.cv-floating-body h1 {
+  font-size: 2em;
+}
+.cv-floating-body h2 {
+  font-size: 1.5em;
+}
+.cv-floating-body h3 {
+  font-size: 1.25em;
+}
+.cv-floating-block {
+  min-width: 120px;
+}
+
+/* Selected-only tools and transparent floating Markdown. */
+.cv-floating-block,
+.cv-floating-block > .cv-text-frame {
+  background: transparent;
+}
+.cv-floating-block:not(.is-selected) > .cv-rotated-frame > .cv-rotation-handle,
+.cv-drawing-object:not(.is-selected) > .cv-rotated-frame > .cv-rotation-handle {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none;
+}
+.is-selected > .cv-rotated-frame > .cv-rotation-handle {
+  display: inline-flex !important;
+  opacity: 1;
+  pointer-events: auto;
+}
+.is-attached-connector.is-selected > .cv-rotated-frame > .cv-rotation-handle {
+  display: none !important;
+}
+.is-connector-source > .cv-rotated-frame,
+.is-connector-target > .cv-rotated-frame {
+  outline: 2px solid var(--interactive-accent, #2783de);
+  background: var(--cv-soft);
+}
+.cv-drawing-preview {
+  pointer-events: none !important;
+}
+
+/* Keep rotation outside the resize handles. */
+.cv-rotation-handle {
+  bottom: -38px;
+}
+@media (pointer: coarse) {
+  .cv-rotation-handle {
+    bottom: -48px;
+  }
+}
+
+.cv-floating-block .cv-inline-input,
+.cv-drawing-object[data-kind="text"] .cv-annotation-edit,
+.cv-drawing-object[data-kind="text"] .cv-annotation-edit textarea,
+.cv-drawing-object[data-kind="section"] .cv-annotation-edit,
+.cv-drawing-object[data-kind="section"] .cv-annotation-edit textarea {
+  background: transparent;
+}
+
+/* Source grips are clipped UI outside the native scroller; no world rebase. */
+.cv-float-handle[hidden] {
+  display: none !important;
+}
+.cv-source-controls {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  pointer-events: none;
+  z-index: 30;
+  contain: layout paint;
+}
+.cv-source-controls > .cv-float-handle {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  margin: 0 !important;
+}
+@media (pointer: coarse) {
+  .cv-source-controls > .cv-float-handle {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* Object-only horizontal camera: clip x overflow without replacing native y scroll. */
+.cv-object-viewport {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 0;
+  overflow-x: clip;
+  overflow-y: visible;
+  contain: layout style;
+  pointer-events: none;
+  z-index: 11;
+}
+.cv-object-viewport[hidden] {
+  display: none !important;
 }

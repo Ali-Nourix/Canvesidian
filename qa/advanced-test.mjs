@@ -1,6 +1,8 @@
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import { clickTool } from "./tool-helpers.mjs";
+import { hoverSourceGrip } from "./grip-helpers.mjs";
+import { writeFileSync } from "node:fs";
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH,
   headless: true,
@@ -12,10 +14,12 @@ const pass = (s) => {
   checks++;
   console.log("PASS: " + s);
 };
+let diagnosticPage;
 try {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
   });
+  diagnosticPage = page;
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(new URL("./harness.html", import.meta.url).href);
   await page.waitForFunction(() => window.ready);
@@ -50,7 +54,7 @@ try {
     await clickTool(page, "Select objects");
   };
   await btn("Shapes and lines").click();
-  assert.equal(await page.locator(".cv-tool-choices [data-tool]").count(), 6);
+  assert.equal(await page.locator(".cv-tool-choices [data-tool]").count(), 8);
   assert.equal(
     await page.locator(".cv-tool-dock > [data-tool=rect]").count(),
     0,
@@ -58,7 +62,7 @@ try {
   await page.screenshot({ path: "qa/advanced-groups.png" });
   pass("related shapes are nested under a single dock group");
   await clickTool(page, "Select objects");
-  await btn("Tool settings").click();
+  await btn("Plugin settings").click();
   assert.equal(
     await page
       .getByRole("checkbox", { name: "Dotted note background", exact: true })
@@ -77,9 +81,9 @@ try {
       .evaluate((el) => el.classList.contains("cv-dot-grid")),
   );
   pass(
-    "Tool settings has a working idle fallback and native plugin settings register a persistent dot-grid toggle",
+    "The single Plugin settings action works and native plugin settings register a persistent dot-grid toggle",
   );
-  // Actual glyph-aligned hover grip for a large RTL heading/line.
+  // The action gutter does not change sides with RTL text.
   const line = page
     .locator(".cm-line")
     .filter({ hasText: "این یک پاراگراف فارسی" });
@@ -87,32 +91,23 @@ try {
     el.dir = "rtl";
     el.style.fontSize = "30px";
   });
+  const gripButton = await hoverSourceGrip(page, line);
   const textBounds = await line.evaluate((el) => {
-    const r = document.createRange();
-    r.selectNodeContents(el);
-    const b = r.getBoundingClientRect();
-    return { x: b.x, y: b.y, width: b.width, height: b.height };
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
   });
-  await page.mouse.move(
-    textBounds.x + textBounds.width / 2,
-    textBounds.y + textBounds.height / 2,
-  );
-  await page.waitForTimeout(80);
-  const grip = await page
-    .getByRole("button", { name: "Float block under pointer", exact: true })
-    .boundingBox();
-  assert.ok(grip.x + grip.width <= textBounds.x + 1);
+  const content = await page.locator(".cm-content").boundingBox();
+  const grip = await gripButton.boundingBox();
+  assert.ok(Math.abs(grip.x - (content.x + content.width + 8)) < 2);
   assert.ok(
     Math.abs(
       grip.y + grip.height / 2 - (textBounds.y + textBounds.height / 2),
     ) < 3,
   );
   await page.screenshot({ path: "qa/advanced-rtl-grip.png" });
-  pass(
-    "native block grip sits physically left of RTL glyphs and aligns to their vertical center",
-  );
+  pass("native block grip stays in the shared right gutter for RTL text");
   await page.evaluate(() => window.floatText("Move this paragraph anywhere"));
-  await btn("Tool settings").click();
+  await btn("Text block settings").click();
   assert.equal(
     await page
       .getByRole("spinbutton", { name: "Text block width", exact: true })
@@ -131,17 +126,16 @@ try {
       .evaluate((el) => el.style.rotate),
     "15deg",
   );
-  pass(
-    "Tool settings edits the selected source block width and rotation instead of silently doing nothing",
-  );
+  pass("Contextual settings edit selected source-block width and rotation");
   await page.mouse.click(700, 110);
   await make("Add sticky note", 800, 360, "چسب واقعی روی یک ایده");
   const sticky = page.locator("[data-kind=sticky]");
   const left = await sticky
-    .getByRole("button", { name: "Move object from left", exact: true })
+    .getByRole("button", { name: "Block actions", exact: true })
     .boundingBox();
   const sb = await sticky.boundingBox();
-  assert.ok(left.x + left.width <= sb.x);
+  assert.ok(Math.abs(left.x - (sb.x + sb.width + 8)) < 2);
+  assert.ok(Math.abs(left.y + left.height / 2 - (sb.y + sb.height / 2)) < 2);
   await btn("Add tape to sticky").click();
   let tape = (await data()).find((d) => d.kind === "tape");
   const stickyId = (await data()).find((d) => d.kind === "sticky").id;
@@ -152,7 +146,7 @@ try {
   );
   await sticky.click({ position: { x: 100, y: 100 } });
   let handle = await sticky
-    .getByRole("button", { name: "Move object from left", exact: true })
+    .getByRole("button", { name: "Block actions", exact: true })
     .boundingBox();
   const prev = { ...tape };
   await page.mouse.move(handle.x + 12, handle.y + 12);
@@ -181,9 +175,11 @@ try {
     Math.abs(tape.x - prev.x - 40) < 2 && Math.abs(tape.y - prev.y - 60) < 2,
   );
   pass(
-    "left object grip drags smoothly and attached tape follows the sticky on commit",
+    "object-centered grip drags smoothly and attached tape follows the sticky on commit",
   );
-  await btn("Tool settings").click();
+  await sticky
+    .getByRole("button", { name: "Object appearance", exact: true })
+    .click();
   await page
     .getByRole("spinbutton", { name: "Rotation degrees", exact: true })
     .fill("30");
@@ -339,7 +335,7 @@ try {
       y: parseFloat(el.style.top),
     }));
     const grip = await locator
-      .getByRole("button", { name: "Move object from left", exact: true })
+      .getByRole("button", { name: "Block actions", exact: true })
       .boundingBox();
     await page.mouse.move(grip.x + 12, grip.y + 12);
     await page.mouse.down();
@@ -455,6 +451,49 @@ try {
   pass("advanced features complete without browser runtime errors");
   console.log(checks + " advanced checks passed");
   await page.close();
+} catch (error) {
+  if (diagnosticPage && !diagnosticPage.isClosed()) {
+    try {
+      await diagnosticPage.screenshot({
+        path: "qa/advanced-failure.png",
+        timeout: 5000,
+      });
+      const diagnostic = await diagnosticPage.evaluate(() => {
+        const rect = (el) => {
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        };
+        const grip = document.querySelector(".cv-float-handle");
+        return {
+          ready: !!window.ready,
+          scroller: rect(document.querySelector(".cm-scroller")),
+          content: rect(document.querySelector(".cm-content")),
+          grip: {
+            rect: rect(grip),
+            hidden: grip?.hidden,
+            label: grip?.getAttribute("aria-label"),
+          },
+          lineCount: document.querySelectorAll(".cm-line").length,
+        };
+      });
+      writeFileSync(
+        "qa/advanced-failure.json",
+        JSON.stringify(
+          { error: String(error), browserErrors: errors, ...diagnostic },
+          null,
+          2,
+        ),
+      );
+      console.error("Advanced test diagnostics:", JSON.stringify(diagnostic));
+    } catch (captureError) {
+      console.error(
+        "Could not capture test diagnostics:",
+        String(captureError),
+      );
+    }
+  }
+  throw error;
 } finally {
   await browser.close();
 }

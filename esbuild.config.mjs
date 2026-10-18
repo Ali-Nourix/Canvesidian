@@ -13,5 +13,5 @@ await build({
   target: "es2022",
   outfile: "main.js",
   sourcemap: false,
-  banner: { js: "/* Canvesidian — generated from src/. Run npm run build. */" },
+  banner: { js: "/* Canvsidian — generated from src/. Run npm run build. */" },
 });

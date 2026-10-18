@@ -12,6 +12,10 @@ export interface Placement {
   width: number;
   height: number;
   rotation?: number;
+  layer?: number;
+  fontSize?: number;
+  background?: string;
+  color?: string;
 }
 export interface Pin extends Placement {
   id: string;
@@ -24,6 +28,7 @@ export interface SavedPin extends Pin {
   after: string;
 }
 export interface SavedNote {
+  viewX?: number;
   enabled: boolean;
   pins: SavedPin[];
   drawings?: Drawing[];
@@ -137,7 +142,7 @@ export function normalize(raw: unknown): InlineStore {
     object.version !== 5
   )
     throw new Error(
-      "Unsupported Canvesidian data version. Existing layout data was not overwritten.",
+      "Unsupported Canvsidian data version. Existing layout data was not overwritten.",
     );
   result.settings = normalizePreferences(object.settings);
   if (object.legacyBoards) result.legacyBoards = object.legacyBoards;
@@ -155,6 +160,7 @@ export function normalize(raw: unknown): InlineStore {
         "line",
         "diamond",
         "arrow",
+        "connector",
         "sticky",
         "label",
         "sticker",
@@ -182,7 +188,7 @@ export function normalize(raw: unknown): InlineStore {
       stroke: v.stroke,
       strokeWidth: limit(v.strokeWidth, 1, 32),
       opacity: limit(v.opacity, 0.1, 1),
-      fontSize: limit(v.fontSize, 12, 72),
+      fontSize: limit(v.fontSize, 12, 144),
       fill: v.fill === "none" || validStroke(v.fill) ? v.fill : "none",
       sticker: STICKERS.some((s) => s.id === v.sticker) ? v.sticker : "star",
     };
@@ -203,6 +209,7 @@ export function normalize(raw: unknown): InlineStore {
     if (!Array.isArray(note?.pins)) continue;
     result.notes[path] = {
       enabled: note.enabled !== false,
+      viewX: Number.isFinite(note.viewX) ? limit(note.viewX, -50000, 50000) : 0,
       drawings: normalizeDrawings(note.drawings),
       pins: note.pins
         .filter(
@@ -221,10 +228,18 @@ export function normalize(raw: unknown): InlineStore {
         .map((p: SavedPin) => ({
           ...p,
           rotation: normalizeAngle(p.rotation),
-          x: limit(p.x, 0, 50000),
+          layer: Number.isFinite(p.layer)
+            ? limit(p.layer!, -100000, 100000)
+            : 0,
+          fontSize: Number.isFinite(p.fontSize)
+            ? limit(p.fontSize!, 12, 144)
+            : undefined,
+          color: validStroke(p.color) ? p.color : undefined,
+          background: validStroke(p.background) ? p.background : undefined,
+          x: limit(p.x, -50000, 50000),
           y: limit(p.y, 0, 50000),
-          width: limit(p.width, 200, 1200),
-          height: limit(p.height, 80, 10000),
+          width: limit(p.width, 120, 4000),
+          height: limit(p.height, 28, 10000),
         })),
     };
   }
@@ -238,6 +253,7 @@ export type DrawingKind =
   | "line"
   | "diamond"
   | "arrow"
+  | "connector"
   | "sticky"
   | "label"
   | "sticker"
@@ -264,6 +280,8 @@ export interface Drawing extends Placement {
   parentId?: string;
   rotationOffset?: number;
   iconId?: string;
+  sourceId?: string;
+  targetId?: string;
 }
 export const validStroke = (s: unknown): s is string =>
   s === "currentColor" || (typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s));
@@ -284,6 +302,7 @@ export function normalizeDrawings(raw: unknown): Drawing[] {
           "line",
           "diamond",
           "arrow",
+          "connector",
           "sticky",
           "label",
           "sticker",
@@ -305,6 +324,17 @@ export function normalizeDrawings(raw: unknown): Drawing[] {
     .map((d) => ({
       ...d,
       rotation: normalizeAngle(d.rotation),
+      layer: Number.isFinite(d.layer) ? limit(d.layer, -100000, 100000) : 0,
+      sourceId:
+        ["connector", "arrow"].includes(d.kind) &&
+        typeof d.sourceId === "string"
+          ? d.sourceId
+          : undefined,
+      targetId:
+        ["connector", "arrow"].includes(d.kind) &&
+        typeof d.targetId === "string"
+          ? d.targetId
+          : undefined,
       parentId:
         d.kind === "tape" && typeof d.parentId === "string"
           ? d.parentId
@@ -316,10 +346,10 @@ export function normalizeDrawings(raw: unknown): Drawing[] {
           ? d.iconId
           : "star",
       text: typeof d.text === "string" ? d.text.slice(0, 10000) : "",
-      fontSize: Number.isFinite(d.fontSize) ? limit(d.fontSize, 12, 72) : 18,
+      fontSize: Number.isFinite(d.fontSize) ? limit(d.fontSize, 12, 144) : 18,
       fill: d.fill === "none" || validStroke(d.fill) ? d.fill : "none",
       sticker: STICKERS.some((s) => s.id === d.sticker) ? d.sticker : "star",
-      x: limit(d.x, 0, 50000),
+      x: limit(d.x, -50000, 50000),
       y: limit(d.y, 0, 50000),
       width: limit(d.width, 2, 10000),
       height: limit(d.height, 2, 10000),
@@ -386,7 +416,7 @@ export function resized(
     top = start.y,
     right = left + start.width,
     bottom = top + start.height;
-  if (handle.includes("w")) left = limit(left + dx, 0, right - minWidth);
+  if (handle.includes("w")) left = limit(left + dx, -50000, right - minWidth);
   if (handle.includes("e")) right = limit(right + dx, left + minWidth, 51200);
   if (handle.includes("n")) top = limit(top + dy, 0, bottom - minHeight);
   if (handle.includes("s")) bottom = limit(bottom + dy, top + minHeight, 60000);
@@ -403,6 +433,32 @@ export const STICKERS = [
   { id: "question", icon: "circle-help", label: "Question", color: "#9B6BC1" },
   { id: "flame", icon: "flame", label: "Flame", color: "#E56458" },
   { id: "sparkles", icon: "sparkles", label: "Sparkles", color: "#9B6BC1" },
+  { id: "rocket", icon: "rocket", label: "Rocket", color: "#2783DE" },
+  { id: "sun", icon: "sun", label: "Sun", color: "#D5803B" },
+  { id: "moon", icon: "moon", label: "Moon", color: "#9B6BC1" },
+  { id: "cloud", icon: "cloud", label: "Cloud", color: "#2783DE" },
+  { id: "rainbow", icon: "rainbow", label: "Rainbow", color: "#E56458" },
+  { id: "smile", icon: "smile", label: "Smile", color: "#D5803B" },
+  {
+    id: "party-popper",
+    icon: "party-popper",
+    label: "Celebrate",
+    color: "#9B6BC1",
+  },
+  { id: "trophy", icon: "trophy", label: "Trophy", color: "#D5803B" },
+  { id: "target", icon: "target", label: "Target", color: "#E56458" },
+  { id: "flag", icon: "flag", label: "Flag", color: "#46A171" },
+  { id: "bookmark", icon: "bookmark", label: "Bookmark", color: "#2783DE" },
+  { id: "coffee", icon: "coffee", label: "Coffee", color: "#D5803B" },
+  { id: "music", icon: "music", label: "Music", color: "#9B6BC1" },
+  { id: "camera", icon: "camera", label: "Camera", color: "#2783DE" },
+  { id: "gift", icon: "gift", label: "Gift", color: "#E56458" },
+  { id: "flower-2", icon: "flower-2", label: "Flower", color: "#9B6BC1" },
+  { id: "leaf", icon: "leaf", label: "Leaf", color: "#46A171" },
+  { id: "tree-pine", icon: "tree-pine", label: "Tree", color: "#46A171" },
+  { id: "mountain", icon: "mountain", label: "Mountain", color: "#2783DE" },
+  { id: "zap", icon: "zap", label: "Lightning", color: "#D5803B" },
+  { id: "brain", icon: "brain", label: "Brain", color: "#9B6BC1" },
 ] as const;
 
 export interface ToolStyle {
@@ -478,7 +534,11 @@ export function rotatedResize(
   return {
     ...next,
     rotation: p.rotation,
-    x: Math.max(0, p.x + p.width / 2 + cx * c - cy * s - next.width / 2),
+    x: limit(
+      p.x + p.width / 2 + cx * c - cy * s - next.width / 2,
+      -50000,
+      50000,
+    ),
     y: Math.max(0, p.y + p.height / 2 + cx * s + cy * c - next.height / 2),
   };
 }

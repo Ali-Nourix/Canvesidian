@@ -313,7 +313,12 @@ try {
   await page.evaluate(() => window.reset());
   await page.waitForTimeout(120);
   const line = page.locator(".cm-line").filter({ hasText: target });
-  await line.hover();
+  const contentRect = await page.locator(".cm-content").boundingBox();
+  const lineRect = await line.boundingBox();
+  await page.mouse.move(
+    contentRect.x + contentRect.width + 12,
+    lineRect.y + lineRect.height / 2,
+  );
   await page.waitForSelector(".cv-float-handle:not([hidden])");
   const hoverGrip = await page.locator(".cv-float-handle").boundingBox();
   await page.mouse.move(hoverGrip.x + 12, hoverGrip.y + 12);

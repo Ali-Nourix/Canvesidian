@@ -110,8 +110,8 @@ test("persisted coordinates are bounded and corrupt records filtered", () => {
   const saved = { ...capture(pin("Hi"), "Hi"), x: -30, width: 9999 };
   const data = normalize({ version: 2, notes: { a: { pins: [saved, {}] } } });
   assert.equal(data.notes.a.pins.length, 1);
-  assert.equal(data.notes.a.pins[0].x, 0);
-  assert.equal(data.notes.a.pins[0].width, 1200);
+  assert.equal(data.notes.a.pins[0].x, -30);
+  assert.equal(data.notes.a.pins[0].width, 4000);
 });
 
 test("interrupted drafts survive serialization and corrupt drafts are filtered", () => {

@@ -89,6 +89,7 @@ export class Modal {
 export function setIcon(el: HTMLElement, name: string) {
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(NS, "svg");
+  svg.dataset.icon = name;
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
@@ -96,6 +97,15 @@ export function setIcon(el: HTMLElement, name: string) {
   svg.setAttribute("stroke-linejoin", "round");
   const paths: Record<string, string> = {
     "mouse-pointer-2": "m4 3 7 18 2-8 8-2Z",
+    "toggle-right":
+      "M7 5h10a7 7 0 0 1 0 14H7A7 7 0 0 1 7 5Z M20 12a3 3 0 1 1-6 0 3 3 0 1 1 6 0",
+    "toggle-left":
+      "M7 5h10a7 7 0 0 1 0 14H7A7 7 0 0 1 7 5Z M10 12a3 3 0 1 1-6 0 3 3 0 1 1 6 0",
+    plus: "M12 5v14 M5 12h14",
+    workflow: "M3 3h6v6H3Z M15 15h6v6h-6Z M6 9v9h9 M9 6h9v9",
+    ticket: "M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4Z M15 5v3m0 3v2m0 3v3",
+    "pen-tool": "m12 3 9 9-9 9-9-9Z M12 3v8 M14 13a2 2 0 1 1-4 0 2 2 0 1 1 4 0",
+    smile: "M21 12a9 9 0 1 1-18 0 9 9 0 1 1 18 0 M8 14q4 5 8 0 M8 8v1 M16 8v1",
     pencil: "m16 3 5 5-13 13H3v-5Z M14 5l5 5",
     highlighter: "m15 3 6 6-9 9-6-6Z M6 12l-3 6 3 3 6-3 M2 22h8",
     square:
@@ -239,6 +249,130 @@ export class Setting {
       },
     };
     cb(c);
+    return this;
+  }
+}
+
+// Test stand-in for Obsidian Menu. Production imports the actual host API.
+export class Menu {
+  el = document.createElement("div");
+  private callback = () => {};
+  private controller = new AbortController();
+  constructor() {
+    this.el.className = "menu";
+    this.el.setAttribute("role", "menu");
+    (window as any).nativeMenuCalls =
+      ((window as any).nativeMenuCalls ?? 0) + 1;
+  }
+  addItem(cb: (item: MenuItem) => void) {
+    const item = new MenuItem(this);
+    cb(item);
+    this.el.append(item.el);
+    return this;
+  }
+  addSeparator() {
+    const e = document.createElement("div");
+    e.className = "menu-separator";
+    this.el.append(e);
+    return this;
+  }
+  onHide(cb: () => void) {
+    this.callback = cb;
+  }
+  showAtPosition(p: { x: number; y: number; left?: boolean }, doc = document) {
+    doc.body.append(this.el);
+    Object.assign(this.el.style, {
+      position: "fixed",
+      zIndex: "10000",
+      width: "248px",
+      maxHeight: "80vh",
+      overflowY: "auto",
+      background: "var(--background-primary)",
+      color: "var(--text-normal)",
+      border: "1px solid var(--background-modifier-border)",
+      borderRadius: "6px",
+      padding: "4px",
+    });
+    this.el.style.left =
+      Math.max(0, Math.min(innerWidth - 248, p.left ? p.x - 248 : p.x)) + "px";
+    this.el.style.top =
+      Math.max(0, Math.min(innerHeight - this.el.offsetHeight, p.y)) + "px";
+    doc.addEventListener(
+      "pointerdown",
+      (e) => {
+        if (!this.el.contains(e.target as Node)) this.hide();
+      },
+      { capture: true, signal: this.controller.signal },
+    );
+    this.el.onkeydown = (e) => {
+      const items = [...this.el.querySelectorAll<HTMLButtonElement>("button")];
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.hide();
+      }
+      if (["ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) {
+        e.preventDefault();
+        const i = items.indexOf(document.activeElement as HTMLButtonElement);
+        items[
+          e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? items.length - 1
+              : (i + (e.key === "ArrowDown" ? 1 : -1) + items.length) %
+                items.length
+        ]?.focus();
+      }
+    };
+    this.el
+      .querySelector<HTMLButtonElement>("button")
+      ?.focus({ preventScroll: true });
+    return this;
+  }
+  hide() {
+    if (!this.el.isConnected) return this;
+    this.el.remove();
+    this.controller.abort();
+    this.callback();
+    return this;
+  }
+}
+export class MenuItem {
+  el = document.createElement("button");
+  constructor(private menu: Menu) {
+    this.el.className = "menu-item";
+    this.el.setAttribute("role", "menuitem");
+    Object.assign(this.el.style, {
+      display: "flex",
+      width: "100%",
+      gap: "8px",
+      padding: "6px",
+      textAlign: "left",
+      fontSize: "13px",
+    });
+  }
+  setTitle(title: string) {
+    this.el.textContent = title;
+    return this;
+  }
+  setIcon(icon: string | null) {
+    if (icon) {
+      const e = document.createElement("span");
+      setIcon(e, icon);
+      e.style.cssText = "width:16px;height:16px;flex-shrink:0";
+      this.el.prepend(e);
+    }
+    return this;
+  }
+  setWarning(value: boolean) {
+    this.el.classList.toggle("is-warning", value);
+    return this;
+  }
+  onClick(cb: () => void) {
+    this.el.onclick = () => {
+      this.menu.hide();
+      cb();
+    };
     return this;
   }
 }

@@ -1,3 +1,4 @@
+import { ObjectCamera, objectCameraX, revealObject } from "./object-camera";
 import {
   StateEffect,
   Prec,
@@ -49,6 +50,12 @@ import {
   leftGrip,
   rotationField,
   rotationHandle,
+  rightGutter,
+  gripInteraction,
+  actionMenu,
+  alignmentActions,
+  copyText,
+  layerActions,
 } from "./interaction";
 import { DesignTools, confirmAction } from "./design-tools";
 
@@ -82,12 +89,24 @@ type Action =
       type: "place";
       id: string;
       placement: Partial<
-        Pick<Pin, "x" | "y" | "width" | "height" | "rotation">
+        Pick<
+          Pin,
+          | "x"
+          | "y"
+          | "width"
+          | "height"
+          | "rotation"
+          | "fontSize"
+          | "color"
+          | "background"
+          | "layer"
+        >
       >;
     }
   | { type: "toggle" }
   | { type: "drawings"; drawings: Drawing[] }
-  | { type: "reset" };
+  | { type: "reset" }
+  | { type: "layers"; layers: Record<string, number> };
 const action = StateEffect.define<Action>();
 // Each host owns its field; a WeakMap keeps public test/command helpers independent of private Obsidian APIs.
 const fields = new WeakMap<EditorView, StateField<SpatialState>>();
@@ -250,9 +269,30 @@ export function createSpatialExtension(host: SpatialHost): Extension {
           a.type === "add" &&
           !value.pins.some((p) => a.pin.from < p.to && a.pin.to > p.from)
         )
-          value = { ...value, enabled: true, pins: [...value.pins, a.pin] };
+          value = {
+            ...value,
+            enabled: true,
+            pins: [
+              ...value.pins,
+              {
+                ...a.pin,
+                layer:
+                  Math.max(
+                    0,
+                    ...value.pins.map((p) => p.layer ?? 0),
+                    ...value.drawings.map((d) => d.layer ?? 0),
+                  ) + 1,
+              },
+            ],
+          };
         if (a.type === "remove")
-          value = { ...value, pins: value.pins.filter((p) => p.id !== a.id) };
+          value = {
+            ...value,
+            pins: value.pins.filter((p) => p.id !== a.id),
+            drawings: value.drawings.filter(
+              (d) => d.sourceId !== a.id && d.targetId !== a.id,
+            ),
+          };
         if (a.type === "place")
           value = {
             ...value,
@@ -260,9 +300,25 @@ export function createSpatialExtension(host: SpatialHost): Extension {
               p.id === a.id ? { ...p, ...a.placement } : p,
             ),
           };
+        if (a.type === "layers")
+          value = {
+            ...value,
+            pins: value.pins.map((p) => ({
+              ...p,
+              layer: a.layers[p.id] ?? p.layer,
+            })),
+            drawings: value.drawings.map((d) => ({
+              ...d,
+              layer: a.layers[d.id] ?? d.layer,
+            })),
+          };
         if (a.type === "toggle") value = { ...value, enabled: !value.enabled };
         if (a.type === "drawings")
-          value = { ...value, drawings: a.drawings, enabled: true };
+          value = {
+            ...value,
+            drawings: a.drawings,
+            enabled: true,
+          };
         if (a.type === "reset")
           value = {
             ...value,
@@ -271,6 +327,18 @@ export function createSpatialExtension(host: SpatialHost): Extension {
             drawings: [],
             enabled: true,
           };
+      }
+      if (tr.docChanged) {
+        const removed = new Set(
+          old.pins
+            .filter((p) => !value.pins.some((n) => n.id === p.id))
+            .map((p) => p.id),
+        );
+        if (removed.size)
+          value.drawings = value.drawings.filter(
+            (d) =>
+              !removed.has(d.sourceId ?? "") && !removed.has(d.targetId ?? ""),
+          );
       }
       const sourceRangesChanged =
         tr.docChanged ||
@@ -312,9 +380,38 @@ export function createSpatialExtension(host: SpatialHost): Extension {
       private cachedSource = "";
       private savedPins = new Map<string, SavedPin>();
       hoverPos: number | null = null;
+      private cancelGrip: () => void;
+      private controls: HTMLElement;
+      private camera: ObjectCamera;
+      private cameraPath = "";
+      private wheel = (event: WheelEvent) => {
+        const state = this.view.state.field(field);
+        if (
+          !event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          !state.enabled ||
+          !state.live ||
+          (!state.pins.length && !state.drawings.length)
+        )
+          return;
+        event.preventDefault();
+        const unit =
+          event.deltaMode === 1
+            ? 16
+            : event.deltaMode === 2
+              ? this.view.scrollDOM.clientWidth
+              : 1;
+        this.camera.set(this.camera.x - (event.deltaX || event.deltaY) * unit);
+      };
       destroyed = false;
       private hoverFrame = 0;
       private hoverEvent: MouseEvent | null = null;
+      private onGutterMove = (event: MouseEvent) => this.queueHover(event);
+      private onGutterLeave = (event: MouseEvent) => {
+        if (!this.handle.contains(event.relatedTarget as Node | null))
+          this.hideHover();
+      };
       private parsedDoc: unknown = null;
       private parsedBlocks: ReturnType<typeof blocks> = [];
       constructor(public view: EditorView) {
@@ -324,8 +421,28 @@ export function createSpatialExtension(host: SpatialHost): Extension {
         this.layer = document.createElement("div");
         this.layer.className = "cv-spatial-layer";
         this.layer.contentEditable = "false";
-        view.scrollDOM.append(this.layer);
-        this.selection = new Selection(view.scrollDOM);
+        this.camera = new ObjectCamera(
+          view.dom,
+          view.scrollDOM,
+          this.layer,
+          (x) => {
+            this.selection?.position();
+            const path = view.state.field(field).path,
+              note = host.store.notes[path];
+            if (note) {
+              note.viewX = x;
+              host.scheduleSave();
+            }
+          },
+        );
+        view.dom.addEventListener("wheel", this.wheel, { passive: false });
+        this.controls = document.createElement("div");
+        this.controls.className = "cv-source-controls";
+        this.controls.contentEditable = "false";
+        view.dom.append(this.controls);
+        this.selection = new Selection(view.scrollDOM, (layers) =>
+          view.dispatch({ effects: action.of({ type: "layers", layers }) }),
+        );
         this.tools = new DesignTools(
           view,
           this.layer,
@@ -358,7 +475,7 @@ export function createSpatialExtension(host: SpatialHost): Extension {
               });
               host.scheduleSave();
               host.notify(
-                "An unfinished annotation draft was saved. Use Canvesidian: Recover interrupted block drafts.",
+                "An unfinished annotation draft was saved. Use Canvsidian: Recover interrupted block drafts.",
               );
             },
             setDrawings: (drawings) =>
@@ -374,21 +491,24 @@ export function createSpatialExtension(host: SpatialHost): Extension {
         setIcon(this.handle, "grip-vertical");
         this.handle.title = "Drag this block out of the text flow";
         this.handle.setAttribute("aria-label", "Float block under pointer");
-        this.layer.append(this.handle);
+        this.controls.append(this.handle);
         this.handle.hidden = true;
-        this.handle.onpointerdown = (e) => {
-          if (e.button !== 0 || this.hoverPos === null) return;
-          e.preventDefault();
-          e.stopPropagation();
-          const pin = floatAt(view, host, this.hoverPos);
-          if (pin) {
-            const card = this.cards.get(pin.id);
-            card?.beginDrag(e, true);
-          }
+        this.handle.onpointerleave = (event) => {
+          if (!view.scrollDOM.contains(event.relatedTarget as Node | null))
+            this.hideHover();
         };
-        this.handle.onclick = () => {
-          if (this.hoverPos !== null) floatAt(view, host, this.hoverPos);
-        };
+        this.cancelGrip = gripInteraction(
+          this.handle,
+          (e) => {
+            if (this.hoverPos === null) return;
+            const pin = floatAt(view, host, this.hoverPos);
+            if (pin) this.cards.get(pin.id)?.beginDrag(e, true);
+            this.hideHover();
+          },
+          () => this.sourceMenu(),
+        );
+        view.scrollDOM.addEventListener("mousemove", this.onGutterMove);
+        view.scrollDOM.addEventListener("mouseleave", this.onGutterLeave);
         this.sync(true);
       }
       update(update: ViewUpdate) {
@@ -405,13 +525,21 @@ export function createSpatialExtension(host: SpatialHost): Extension {
           )
             this.persist();
         }
-        if (update.docChanged || update.viewportChanged)
-          this.handle.hidden = true;
+        if (update.docChanged || update.viewportChanged) this.hideHover();
       }
       sync(initial: boolean) {
         const state = this.view.state.field(field);
         const shown = state.enabled && state.live && !!state.path;
+        if (state.path !== this.cameraPath) {
+          this.cameraPath = state.path;
+          this.camera.set(host.store.notes[state.path]?.viewX ?? 0, false);
+        }
+        if (!state.pins.length && !state.drawings.length)
+          this.camera.set(0, false);
+        this.camera.viewport.hidden = !shown;
         this.layer.hidden = !shown;
+        this.camera.layout();
+        if (!shown) this.hideHover();
         for (const [id, card] of this.cards)
           if (!shown || !state.pins.some((p) => p.id === id)) {
             card.destroy();
@@ -428,6 +556,7 @@ export function createSpatialExtension(host: SpatialHost): Extension {
                 this.layer,
                 () => this.persist(),
                 this.selection,
+                (p) => this.tools.previewTarget(pin.id, p),
               );
               this.cards.set(pin.id, card);
               this.selection.select(card);
@@ -435,10 +564,11 @@ export function createSpatialExtension(host: SpatialHost): Extension {
             if (card.pin !== pin || !card.root.style.width) card.update(pin);
           }
         this.tools.sync();
+        this.selection.refreshLayers();
         this.selection.position();
         if (initial && state.detached.length)
           host.notify(
-            `${state.detached.length} Canvesidian placement(s) could not be matched safely. Their text remains visible; saved placement has been retained.`,
+            `${state.detached.length} Canvsidian placement(s) could not be matched safely. Their text remains visible; saved placement has been retained.`,
           );
       }
       persist() {
@@ -463,10 +593,116 @@ export function createSpatialExtension(host: SpatialHost): Extension {
         });
         host.store.notes[state.path] = {
           enabled: state.enabled,
+          viewX: this.camera.x,
           pins: [...saved, ...state.detached],
           drawings: state.drawings,
         };
         host.scheduleSave();
+      }
+      hideHover() {
+        cancelAnimationFrame(this.hoverFrame);
+        this.hoverFrame = 0;
+        this.hoverEvent = null;
+        this.handle.hidden = true;
+      }
+      sourceMenu() {
+        if (this.hoverPos === null) return;
+        const block = blockAt(this.view.state.doc.toString(), this.hoverPos);
+        if (!block) return;
+        const originalDoc = this.view.state.doc;
+        const valid = () => {
+          if (this.view.state.doc === originalDoc) return true;
+          host.notify(
+            "This block changed while its menu was open. Reopen the block menu before editing it.",
+          );
+          return false;
+        };
+        const float = () => {
+          const p = floatAt(this.view, host, block.from);
+          return p ? this.cards.get(p.id) : undefined;
+        };
+        actionMenu(
+          this.handle,
+          [
+            {
+              label: "Edit block",
+              icon: "pencil",
+              run: () => {
+                this.view.dispatch({
+                  selection: { anchor: block.from },
+                  scrollIntoView: true,
+                });
+                this.view.focus();
+              },
+            },
+            {
+              label: "Copy Markdown",
+              icon: "clipboard-copy",
+              run: () =>
+                copyText(
+                  this.view.state.doc.sliceString(block.from, block.to),
+                  (m) => host.notify(m),
+                ),
+            },
+            {
+              label: "Select block text",
+              icon: "text-select",
+              run: () => {
+                this.view.dispatch({
+                  selection: { anchor: block.from, head: block.to },
+                  scrollIntoView: true,
+                });
+                this.view.focus();
+              },
+            },
+            {
+              label: "Float and move",
+              icon: "move",
+              run: () => {
+                float();
+                this.hideHover();
+              },
+            },
+            {
+              label: "Text size and color",
+              icon: "palette",
+              run: () => {
+                float()?.openSettings();
+                this.hideHover();
+              },
+            },
+            {
+              label: "Duplicate",
+              icon: "copy",
+              run: () =>
+                this.view.dispatch({
+                  changes: { from: block.to, insert: "\n\n" + block.text },
+                }),
+            },
+            {
+              label: "Delete",
+              icon: "trash-2",
+              run: () =>
+                confirmAction(
+                  host.app,
+                  "Delete this block?",
+                  "Remove this block's Markdown from this note. Use text undo to restore it.",
+                  "Delete block",
+                  () => {
+                    if (valid())
+                      this.view.dispatch({
+                        changes: { from: block.from, to: block.to },
+                      });
+                  },
+                ),
+            },
+          ].map((item) => ({
+            ...item,
+            run: () => {
+              if (valid()) item.run();
+            },
+          })),
+        );
       }
       hover(event: MouseEvent) {
         const state = this.view.state.field(field);
@@ -474,67 +710,97 @@ export function createSpatialExtension(host: SpatialHost): Extension {
           !state.enabled ||
           !state.live ||
           this.view.scrollDOM.classList.contains("cv-has-gesture")
-        )
+        ) {
+          this.hideHover();
+          return;
+        }
+        if ((event.target as Element)?.closest(".cv-float-handle,.menu"))
           return;
         if (
-          !(event.target instanceof HTMLElement) ||
-          !event.target.closest(".cm-content") ||
-          event.target.closest(".cv-spatial-layer")
-        )
+          (event.target as Element)?.closest(
+            ".cv-floating-block,.cv-drawing-object,.cv-tool-dock",
+          )
+        ) {
+          this.hideHover();
           return;
+        }
+        const content = this.view.contentDOM.getBoundingClientRect();
+        // Only the dedicated right gutter reveals the grip, never ordinary typing/content hover.
+        const size = matchMedia("(pointer:coarse)").matches ? 44 : 28;
+        const gutter =
+          rightGutter(this.view.scrollDOM) +
+          this.view.scrollDOM.getBoundingClientRect().left -
+          this.view.scrollDOM.scrollLeft;
+        if (event.clientX < gutter - 4 || event.clientX > gutter + size + 4) {
+          this.hideHover();
+          return;
+        }
         const pos = this.view.posAtCoords({
-          x: event.clientX,
+          x: Math.min(
+            content.right - 4,
+            Math.max(content.left + 4, event.clientX),
+          ),
           y: event.clientY,
         });
-        if (pos === null) return;
+        if (pos === null) {
+          this.hideHover();
+          return;
+        }
         if (this.parsedDoc !== this.view.state.doc) {
           this.parsedDoc = this.view.state.doc;
           this.parsedBlocks = blocks(this.view.state.doc.toString());
         }
-        const block = this.parsedBlocks.find(
-          (b) => b.from <= pos && pos <= b.to,
+        const lineBounds = (pos: number) => {
+          const dom = this.view.domAtPos(pos).node;
+          const el = dom instanceof Element ? dom : dom.parentElement;
+          return el?.closest(".cm-line")?.getBoundingClientRect();
+        };
+        let lo = 0,
+          hi = this.parsedBlocks.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >>> 1;
+          if (this.parsedBlocks[mid].from <= pos) lo = mid + 1;
+          else hi = mid;
+        }
+        const block = [this.parsedBlocks[lo - 1], this.parsedBlocks[lo]].find(
+          (b) => {
+            if (!b) return false;
+            const a = lineBounds(b.from) ?? this.view.coordsAtPos(b.from),
+              z = lineBounds(b.to) ?? this.view.coordsAtPos(b.to);
+            return (
+              a &&
+              z &&
+              event.clientY >= a.top &&
+              event.clientY <= Math.max(a.bottom, z.bottom)
+            );
+          },
         );
         if (
           !block ||
           state.pins.some((p) => block.from < p.to && block.to > p.from)
         ) {
-          this.handle.hidden = true;
+          this.hideHover();
           return;
         }
-        const coords = this.view.coordsAtPos(block.from);
-        if (!coords) return;
-        const rect = this.view.scrollDOM.getBoundingClientRect();
-        this.hoverPos = pos;
-        let bounds = {
-          left: coords.left,
-          top: coords.top,
-          height: coords.bottom - coords.top,
-        };
-        // A DOM range follows real rendered glyphs, including RTL headings and images.
-        try {
-          const lineEnd = Math.min(
-            block.to,
-            this.view.state.doc.lineAt(block.from).to,
-          );
-          const start = this.view.domAtPos(block.from),
-            end = this.view.domAtPos(lineEnd);
-          const range = document.createRange();
-          range.setStart(start.node, start.offset);
-          range.setEnd(end.node, end.offset);
-          const r = range.getBoundingClientRect();
-          if (r.width > 0 && r.height > 0) bounds = r;
-        } catch {}
-        const size = matchMedia("(pointer:coarse)").matches ? 44 : 28;
-        this.handle.style.left =
-          Math.max(
-            0,
-            bounds.left - rect.left + this.view.scrollDOM.scrollLeft - size - 8,
-          ) + "px";
+        const first =
+            lineBounds(block.from) ?? this.view.coordsAtPos(block.from),
+          last = lineBounds(block.to) ?? this.view.coordsAtPos(block.to);
+        if (
+          !first ||
+          !last ||
+          event.clientY < first.top ||
+          event.clientY > Math.max(first.bottom, last.bottom)
+        ) {
+          this.hideHover();
+          return;
+        }
+        const controls = this.controls.getBoundingClientRect();
+        this.hoverPos = block.from;
+        this.handle.style.left = gutter - controls.left + "px";
         this.handle.style.top =
-          bounds.top -
-          rect.top +
-          this.view.scrollDOM.scrollTop +
-          (bounds.height - size) / 2 +
+          (first.top + Math.max(first.bottom, last.bottom)) / 2 -
+          controls.top -
+          size / 2 +
           "px";
         this.handle.hidden = false;
       }
@@ -552,8 +818,19 @@ export function createSpatialExtension(host: SpatialHost): Extension {
         this.persist();
         this.cards.forEach((c) => c.destroy());
         this.cards.clear();
+        this.view.scrollDOM.removeEventListener("mousemove", this.onGutterMove);
+        this.view.scrollDOM.removeEventListener(
+          "mouseleave",
+          this.onGutterLeave,
+        );
+        this.layer.dispatchEvent(new Event("cv-destroy"));
+        this.controls.dispatchEvent(new Event("cv-destroy"));
+        this.controls.remove();
+        this.cancelGrip();
         this.tools.destroy();
-        this.layer.remove();
+        this.selection.destroy();
+        this.view.dom.removeEventListener("wheel", this.wheel);
+        this.camera.destroy();
         this.view.scrollDOM.classList.remove("cv-spatial-scroller");
         host.views.delete(this.view);
         fields.delete(this.view);
@@ -561,6 +838,13 @@ export function createSpatialExtension(host: SpatialHost): Extension {
     },
     {
       eventHandlers: {
+        keydown() {
+          this.hideHover();
+        },
+
+        scroll() {
+          this.hideHover();
+        },
         mousemove(event) {
           this.queueHover(event);
         },
@@ -613,10 +897,17 @@ export function floatAt(
   const at = view.coordsAtPos(block.from);
   const content = view.contentDOM.getBoundingClientRect();
   const width = limit(Math.min(content.width - 32, 420), 200, 1200);
+  const camera = objectCameraX(view.scrollDOM);
   const rightMargin =
-    content.right - rect.left + view.scrollDOM.scrollLeft + 32;
+    content.right -
+    rect.left -
+    view.scrollDOM.clientLeft +
+    view.scrollDOM.scrollLeft -
+    camera +
+    32;
   const hasMargin =
-    rightMargin + width <= view.scrollDOM.scrollLeft + rect.width - 16;
+    rightMargin + width <=
+    view.scrollDOM.scrollLeft - camera + view.scrollDOM.clientWidth - 16;
   const bottom =
     view.coordsAtPos(view.state.doc.length)?.bottom ?? at?.bottom ?? rect.top;
   const pin: Pin = {
@@ -625,8 +916,15 @@ export function floatAt(
     x: limit(
       hasMargin
         ? rightMargin
-        : Math.max(16, content.left - rect.left + view.scrollDOM.scrollLeft),
-      8,
+        : Math.max(
+            16 - camera,
+            content.left -
+              rect.left -
+              view.scrollDOM.clientLeft +
+              view.scrollDOM.scrollLeft -
+              camera,
+          ),
+      -50000,
       50000,
     ),
     y: limit(
@@ -661,6 +959,7 @@ class FloatingBlock implements Selectable {
   private editButton: HTMLButtonElement;
   private frame: HTMLElement;
   private updateGrip: () => void;
+  alignGrip = () => this.updateGrip();
   private cancelRotate: () => void;
   private commitDraft: (() => boolean) | null = null;
   private dragging = false;
@@ -687,12 +986,15 @@ class FloatingBlock implements Selectable {
     parent: HTMLElement,
     private persist: () => void,
     private selection: Selection,
+    private previewConnections: (p: import("./model").Placement | null) => void,
   ) {
     this.pin = pin;
     this.id = pin.id;
+    this.selection.register(this);
     this.path = this.view.state.field(fields.get(this.view)!).path;
     this.root = document.createElement("article");
     this.root.className = "cv-floating-block";
+    this.root.dataset.id = pin.id;
     this.root.setAttribute("aria-label", "Floating block in this note");
     this.root.contentEditable = "false";
     this.root.tabIndex = 0;
@@ -764,6 +1066,7 @@ class FloatingBlock implements Selectable {
       () => this.pin,
       (e) => this.beginDrag(e),
       (e) => this.nudge(e, false),
+      () => this.menu(),
     );
     this.cancelRotate = rotationHandle(
       this.root,
@@ -777,6 +1080,7 @@ class FloatingBlock implements Selectable {
         });
         this.selection.position();
       },
+      (p) => this.previewConnections(p),
     );
     this.resize = this.root.querySelector(".cv-handle-se") as HTMLButtonElement;
     this.root.onpointerdown = (e) => {
@@ -821,10 +1125,17 @@ class FloatingBlock implements Selectable {
   update(pin: Pin) {
     this.pin = pin;
     this.frame.style.rotate = (pin.rotation ?? 0) + "deg";
-    this.updateGrip();
     this.root.style.left = pin.x + "px";
     this.root.style.top = pin.y + "px";
     this.root.style.width = pin.width + "px";
+    this.root.style.minHeight = pin.height + "px";
+    this.body.style.fontSize = pin.fontSize ? pin.fontSize + "px" : "";
+    this.body.style.color = pin.color ?? "";
+    this.body.style.background = pin.background ?? "";
+    if (this.textarea)
+      this.textarea.style.fontSize = pin.fontSize ? pin.fontSize + "px" : "";
+    this.updateGrip();
+    this.selection.refreshLayers();
     const source = pin.text;
     if (this.textarea) {
       if (source !== this.draftBase) {
@@ -874,9 +1185,68 @@ class FloatingBlock implements Selectable {
       if (generation !== this.generation || this.textarea) return;
     } catch (e) {
       if (generation === this.generation) this.body.textContent = text;
-      console.error("Canvesidian block renderer", e);
+      console.error("Canvsidian block renderer", e);
     }
   }
+  setLayer = (layer: number) =>
+    this.dispatch({ type: "place", id: this.pin.id, placement: { layer } });
+  menu = () => {
+    this.select();
+    actionMenu(this.root.querySelector<HTMLElement>(".cv-object-grip")!, [
+      { label: "Edit text", icon: "pencil", run: () => this.edit() },
+      {
+        label: "Text size and color",
+        icon: "palette",
+        run: () => this.openSettings(),
+      },
+      {
+        label: "Copy Markdown",
+        icon: "clipboard-copy",
+        run: () => copyText(this.pin.text, (m) => this.host.notify(m)),
+      },
+      ...alignmentActions(this.view.scrollDOM, this.position, (p) =>
+        this.dispatch({ type: "place", id: this.pin.id, placement: p }),
+      ),
+      {
+        label: "Reset rotation",
+        icon: "rotate-ccw",
+        run: () =>
+          this.dispatch({
+            type: "place",
+            id: this.pin.id,
+            placement: { rotation: 0 },
+          }),
+      },
+      ...layerActions(this.selection, this),
+      {
+        label: "Duplicate",
+        icon: "copy",
+        run: () =>
+          this.view.dispatch({
+            changes: { from: this.pin.to, insert: "\n\n" + this.pin.text },
+          }),
+      },
+      {
+        label: "Return to text flow",
+        icon: "corner-up-left",
+        run: () => this.dispatch({ type: "remove", id: this.pin.id }),
+      },
+      {
+        label: "Return and edit source",
+        icon: "file-text",
+        run: () => {
+          const from = this.pin.from;
+          this.dispatch({ type: "remove", id: this.pin.id });
+          this.view.dispatch({
+            selection: { anchor: from },
+            scrollIntoView: true,
+          });
+          this.view.focus();
+        },
+      },
+      { label: "Delete", icon: "trash-2", run: () => this.remove() },
+    ]);
+  };
   position = () => this.pin;
   bounds = () => rotatedBounds(this.pin);
   openSettings = () => {
@@ -889,18 +1259,75 @@ class FloatingBlock implements Selectable {
     label.textContent = "Width";
     const input = document.createElement("input");
     input.type = "number";
-    input.min = "200";
-    input.max = "1200";
+    input.min = "120";
+    input.max = "4000";
     input.value = String(Math.round(this.pin.width));
     input.setAttribute("aria-label", "Text block width");
     input.onchange = () =>
       this.dispatch({
         type: "place",
         id: this.pin.id,
-        placement: { width: limit(Number(input.value) || 200, 200, 1200) },
+        placement: { width: limit(Number(input.value) || 200, 120, 4000) },
       });
     label.append(input);
     menu.append(label);
+    const number = (
+      name: string,
+      value: number,
+      min: number,
+      max: number,
+      key: "fontSize" | "height",
+    ) => {
+      const label = document.createElement("label");
+      label.textContent = name;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = String(min);
+      input.max = String(max);
+      input.value = String(value);
+      input.setAttribute("aria-label", name);
+      input.onchange = () =>
+        this.dispatch({
+          type: "place",
+          id: this.pin.id,
+          placement: { [key]: limit(Number(input.value) || min, min, max) },
+        });
+      label.append(input);
+      menu.append(label);
+    };
+    number("Text font size", this.pin.fontSize ?? 16, 12, 144, "fontSize");
+    number("Text block height", this.pin.height, 28, 10000, "height");
+    for (const key of ["color", "background"] as const) {
+      const label = document.createElement("label");
+      label.textContent = key === "color" ? "Text color" : "Background color";
+      const input = document.createElement("input");
+      input.type = "color";
+      input.value = this.pin[key]?.startsWith("#")
+        ? this.pin[key]!
+        : key === "color"
+          ? "#2783DE"
+          : "#FFF0AD";
+      input.setAttribute("aria-label", label.textContent);
+      input.onchange = () =>
+        this.dispatch({
+          type: "place",
+          id: this.pin.id,
+          placement: { [key]: input.value },
+        });
+      label.append(input);
+      menu.append(label);
+    }
+    iconButton(menu, "rotate-ccw", "Reset text appearance", () =>
+      this.dispatch({
+        type: "place",
+        id: this.pin.id,
+        placement: {
+          fontSize: undefined,
+          color: undefined,
+          background: undefined,
+        },
+      }),
+    );
     rotationField(menu, this.pin.rotation ?? 0, (n) => {
       this.dispatch({
         type: "place",
@@ -1044,8 +1471,13 @@ class FloatingBlock implements Selectable {
         id: this.pin.id,
         placement: {
           x: limit(
-            event.clientX - rect.left + this.view.scrollDOM.scrollLeft + 24,
-            0,
+            event.clientX -
+              rect.left -
+              this.view.scrollDOM.clientLeft +
+              this.view.scrollDOM.scrollLeft -
+              objectCameraX(this.view.scrollDOM) +
+              24,
+            -50000,
             50000,
           ),
           y: limit(
@@ -1072,12 +1504,13 @@ class FloatingBlock implements Selectable {
       type: "place",
       id: this.pin.id,
       placement: resize
-        ? { width: limit(this.pin.width + dx, 200, 1200) }
+        ? { width: limit(this.pin.width + dx, 120, 4000) }
         : {
-            x: limit(this.pin.x + dx, 0, 50000),
+            x: limit(this.pin.x + dx, -50000, 50000),
             y: limit(this.pin.y + dy, 0, 50000),
           },
     });
+    revealObject(this.view.scrollDOM, this.bounds());
   }
   private drag(e: PointerEvent, handle?: Handle) {
     if (e.button !== 0) return;
@@ -1089,20 +1522,18 @@ class FloatingBlock implements Selectable {
       scroller: this.view.scrollDOM,
       root: this.root,
       start,
+      explicitHeight: true,
+      autoPan: !handle,
+      preview: (p) => this.previewConnections(p),
+      finishPreview: () => this.previewConnections(null),
       project: (dx, dy) => {
         if (!handle)
           return {
             ...start,
-            x: limit(start.x + dx, 0, 50000),
+            x: limit(start.x + dx, -50000, 50000),
             y: limit(start.y + dy, 0, 50000),
           };
-        const horizontal = handle.includes("w") ? "w" : "e";
-        const next = rotatedResize(start, dx, dy, horizontal, 200, 24);
-        return {
-          ...next,
-          y: start.rotation ? next.y : start.y,
-          height: start.height,
-        };
+        return rotatedResize(start, dx, dy, handle, 120, 28);
       },
       commit: (p) => {
         this.dispatch({
@@ -1113,7 +1544,7 @@ class FloatingBlock implements Selectable {
             y: p.y,
             width: p.width,
             rotation: p.rotation,
-            height: Math.ceil(this.root.offsetHeight),
+            height: p.height,
           },
         });
         this.selection.position();
@@ -1125,6 +1556,7 @@ class FloatingBlock implements Selectable {
     });
   }
   destroy() {
+    this.root.dispatchEvent(new Event("cv-destroy"));
     this.cancelRotate();
     if (this.textarea && this.textarea.value !== this.draftBase) {
       const path = this.path;
@@ -1139,7 +1571,7 @@ class FloatingBlock implements Selectable {
         });
         this.host.scheduleSave();
         this.host.notify(
-          "An interrupted block draft was saved. Use Canvesidian: Recover interrupted block drafts to copy it.",
+          "An interrupted block draft was saved. Use Canvsidian: Recover interrupted block drafts to copy it.",
         );
       }
     }

@@ -82,12 +82,12 @@ test("north-west resize keeps the opposite corner fixed", () => {
   const p = resized({ x: 30, y: 40, width: 100, height: 80 }, 10, 20, "nw");
   assert.deepEqual(p, { x: 40, y: 60, width: 90, height: 60 });
 });
-test("resize cannot invert the box or cross the origin", () => {
+test("resize cannot invert the box and allows negative horizontal space", () => {
   const p = resized({ x: 30, y: 40, width: 100, height: 80 }, 1000, 1000, "nw");
   assert.equal(p.width, 24);
   assert.equal(p.height, 24);
   const q = resized({ x: 30, y: 40, width: 100, height: 80 }, -100, -100, "nw");
-  assert.equal(q.x, 0);
+  assert.equal(q.x, -70);
   assert.equal(q.y, 0);
 });
 
@@ -151,7 +151,7 @@ test("annotation payload rejects unsafe fills and clamps long text and font", ()
   const actual = normalizeDrawings([d])[0];
   assert.equal(actual.fill, "none");
   assert.equal(actual.text!.length, 10000);
-  assert.equal(actual.fontSize, 72);
+  assert.equal(actual.fontSize, 144);
   assert.equal(actual.sticker, "star");
 });
 test("new diamond arrow and sticker kinds are retained", () => {

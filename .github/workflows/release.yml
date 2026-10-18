@@ -53,6 +53,16 @@ jobs:
         run: npm exec -- playwright install --with-deps chromium
       - name: Browser regression tests
         run: npm run test:ui
+      - name: Upload browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qa/*.png
+            qa/*failure.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Package installable assets
         shell: bash
         run: |

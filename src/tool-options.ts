@@ -173,7 +173,7 @@ export function stylePanel(
     swatches(textKind ? "Text color" : "Stroke color", COLORS, "stroke");
     if (textKind || ["rect", "ellipse", "diamond", "triangle"].includes(kind))
       swatches("Fill", textKind ? PAPERS : ["none", ...PAPERS], "fill");
-    if (textKind) number("Font size", "fontSize", 12, 48, 1);
+    if (textKind) number("Font size", "fontSize", 12, 144, 1);
     else number("Size", "strokeWidth", 1, 32, 1);
     number("Opacity", "opacity", 0.1, 1, 0.05);
   }
