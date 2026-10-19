@@ -1,10 +1,21 @@
-# Canvsidian 0.6.5 — independent horizontal object view
+<h1 align="center">Canvsidian</h1>
 
-**همان نوت، همان تب؛ بلاک را انتخاب کن، جابه‌جا کن و همان‌جا بنویس.**
+<p align="center">
+  <strong>JAM-inspired spatial tools for your existing Obsidian notes.</strong><br>
+  Select, move, edit, annotate, and draw — without creating a separate canvas or note.
+</p>
 
-این نسخه مسیر drag را سبک‌تر می‌کند و کادر انتخاب شبیه ابزارهای طراحی، نوار ابزار شناورِ مخصوص آبجکت انتخاب‌شده، حذف تکی، ریست چیدمان و ترسیم برداری اضافه می‌کند. هیچ نوت، Canvas file یا workspace view جدیدی نمی‌سازد.
+<p align="center">
+  <img src="https://img.shields.io/badge/Obsidian-Plugin-7C3AED?style=for-the-badge&logo=obsidian&logoColor=white" alt="Obsidian Plugin">
+  <img src="https://img.shields.io/badge/Version-0.6.5-5B6DCD?style=for-the-badge" alt="Version 0.6.5">
+  <img src="https://img.shields.io/badge/Status-Experimental-E09F3E?style=for-the-badge" alt="Experimental">
+  <img src="https://img.shields.io/badge/Platform-Desktop%20%26%20Mobile-475569?style=for-the-badge" alt="Desktop and mobile target">
+</p>
 
-> **Experimental:** تست‌ها با CodeMirror واقعی و میزبان/renderer شبیه‌سازی‌شده اجرا شده‌اند؛ اجرای این نسخه داخل خود اپ Obsidian هنوز تأیید نشده است. ابتدا از vault و `data.json` بک‌آپ بگیرید و روی vault آزمایشی امتحان کنید. تصاویر QA تصویر اجرای واقعی Obsidian نیستند.
+<p align="center" dir="rtl">
+  <strong>ابزارهای فضایی با الهام از JAM برای نوت‌های موجود در Obsidian.</strong><br>
+  بلاک‌ها را انتخاب، جابه‌جا و ویرایش کنید و در همان نوت ترسیم و annotation اضافه کنید؛ بدون ساخت Canvas یا نوت جداگانه.
+</p>
 
 ## بیلد و انتشار خودکار
 
