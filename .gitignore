@@ -8,3 +8,6 @@ qa/*.png
 qa/performance-result.json
 
 qa/*failure.json
+
+# Generated originals; lossless embedded SVG screenshots are committed.
+docs/images/*.png

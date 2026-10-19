@@ -1,0 +1,39 @@
+{
+  "appVersion": "1.14.4",
+  "pluginVersion": "0.6.5",
+  "screenshotViewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "connectedArrows": 2,
+  "sourceUnchangedByToggle": true,
+  "renderer": "Obsidian application, default theme, native MarkdownRenderer",
+  "fixture": "Synthetic demo vault; no user notes or private data",
+  "imageEncoding": "Unmodified lossless PNG embedded in standalone SVG; no composited or generated UI",
+  "screenshots": [
+    {
+      "file": "obsidian-overview-dark.svg",
+      "width": 1440,
+      "height": 960,
+      "pngSha256": "f075cfe763c3d7f7b66a764af613129572c701900f3ec6b0dcbb89c4e7207dca"
+    },
+    {
+      "file": "obsidian-edit-light.svg",
+      "width": 1440,
+      "height": 960,
+      "pngSha256": "e11c2f22b6f198b5aec2cbf2a4cd3e02b827a99534b03b5e87e66c1528682c84"
+    },
+    {
+      "file": "obsidian-actions-light.svg",
+      "width": 1440,
+      "height": 960,
+      "pngSha256": "47bc8d2d316f07b2822768ceead49fa3fe477563b50b9b7c5edbcd3dbf491a99"
+    },
+    {
+      "file": "obsidian-normal-flow-dark.svg",
+      "width": 1440,
+      "height": 960,
+      "pngSha256": "909e023e2956b5fa93f2af1f39dadd6d26126b13e06cb54a055d306c3210907b"
+    }
+  ]
+}
