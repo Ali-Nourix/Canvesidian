@@ -4862,8 +4862,24 @@ function gripInteraction(button, drag, menu) {
   };
   return () => cleanup?.();
 }
+function bindContextMenu(root, open) {
+  root.addEventListener("contextmenu", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(
+      "textarea,input,select,[contenteditable='true'],.cv-property-popover"
+    )) {
+      event.stopPropagation();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    open(
+      event.clientX || event.clientY ? { x: event.clientX, y: event.clientY } : void 0
+    );
+  });
+}
 var activeMenus = /* @__PURE__ */ new WeakMap();
-function actionMenu(anchor, actions) {
+function actionMenu(anchor, actions, point) {
   const editor = anchor.closest(".cm-editor");
   if (!editor) return;
   activeMenus.get(editor)?.hide();
@@ -4884,7 +4900,7 @@ function actionMenu(anchor, actions) {
   });
   const rect = anchor.getBoundingClientRect();
   menu.showAtPosition(
-    { x: rect.left, y: rect.bottom, width: rect.width, left: true },
+    point ? { x: point.x, y: point.y } : { x: rect.left, y: rect.bottom, width: rect.width, left: true },
     anchor.ownerDocument
   );
 }
@@ -6446,6 +6462,7 @@ var DrawingObject = class {
       this.gesture(e);
     };
     this.root.ondblclick = () => this.editText();
+    bindContextMenu(this.root, (point) => this.menu(point));
     this.root.onkeydown = (e) => {
       if (e.target instanceof HTMLButtonElement || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
         return;
@@ -6475,7 +6492,7 @@ var DrawingObject = class {
     this.frame.style.rotate = (p.rotation ?? 0) + "deg";
   }
   setLayer = (layer) => this.change({ ...this.value, layer });
-  menu = () => {
+  menu = (point) => {
     this.select();
     const actions = [
       {
@@ -6519,7 +6536,8 @@ var DrawingObject = class {
       });
     actionMenu(
       this.root.querySelector(".cv-object-grip"),
-      actions
+      actions,
+      point
     );
   };
   position = () => this.value;
@@ -7153,6 +7171,7 @@ function createSpatialExtension(host) {
           },
           () => this.sourceMenu()
         );
+        bindContextMenu(this.handle, (point) => this.sourceMenu(point));
         view.scrollDOM.addEventListener("mousemove", this.onGutterMove);
         view.scrollDOM.addEventListener("mouseleave", this.onGutterLeave);
         this.sync(true);
@@ -7274,7 +7293,7 @@ function createSpatialExtension(host) {
         this.hoverEvent = null;
         this.handle.hidden = true;
       }
-      sourceMenu() {
+      sourceMenu(point) {
         if (this.hoverPos === null) return;
         const block = blockAt(this.view.state.doc.toString(), this.hoverPos);
         if (!block) return;
@@ -7367,7 +7386,8 @@ function createSpatialExtension(host) {
             run: () => {
               if (valid()) item.run();
             }
-          }))
+          })),
+          point
         );
       }
       hover(event) {
@@ -7639,6 +7659,7 @@ var FloatingBlock = class {
     this.body.className = "cv-floating-body markdown-rendered";
     this.body.dir = "auto";
     this.body.ondblclick = () => this.edit();
+    bindContextMenu(this.root, (point) => this.menu(point));
     this.frame.append(this.body);
     addHandles(
       this.frame,
@@ -7793,62 +7814,66 @@ var FloatingBlock = class {
     }
   }
   setLayer = (layer) => this.dispatch({ type: "place", id: this.pin.id, placement: { layer } });
-  menu = () => {
+  menu = (point) => {
     this.select();
-    actionMenu(this.root.querySelector(".cv-object-grip"), [
-      { label: "Edit text", icon: "pencil", run: () => this.edit() },
-      {
-        label: "Text size and color",
-        icon: "palette",
-        run: () => this.openSettings()
-      },
-      {
-        label: "Copy Markdown",
-        icon: "clipboard-copy",
-        run: () => copyText(this.pin.text, (m) => this.host.notify(m))
-      },
-      ...alignmentActions(
-        this.view.scrollDOM,
-        this.position,
-        (p) => this.dispatch({ type: "place", id: this.pin.id, placement: p })
-      ),
-      {
-        label: "Reset rotation",
-        icon: "rotate-ccw",
-        run: () => this.dispatch({
-          type: "place",
-          id: this.pin.id,
-          placement: { rotation: 0 }
-        })
-      },
-      ...layerActions(this.selection, this),
-      {
-        label: "Duplicate",
-        icon: "copy",
-        run: () => this.view.dispatch({
-          changes: { from: this.pin.to, insert: "\n\n" + this.pin.text }
-        })
-      },
-      {
-        label: "Return to text flow",
-        icon: "corner-up-left",
-        run: () => this.dispatch({ type: "remove", id: this.pin.id })
-      },
-      {
-        label: "Return and edit source",
-        icon: "file-text",
-        run: () => {
-          const from = this.pin.from;
-          this.dispatch({ type: "remove", id: this.pin.id });
-          this.view.dispatch({
-            selection: { anchor: from },
-            scrollIntoView: true
-          });
-          this.view.focus();
-        }
-      },
-      { label: "Delete", icon: "trash-2", run: () => this.remove() }
-    ]);
+    actionMenu(
+      this.root.querySelector(".cv-object-grip"),
+      [
+        { label: "Edit text", icon: "pencil", run: () => this.edit() },
+        {
+          label: "Text size and color",
+          icon: "palette",
+          run: () => this.openSettings()
+        },
+        {
+          label: "Copy Markdown",
+          icon: "clipboard-copy",
+          run: () => copyText(this.pin.text, (m) => this.host.notify(m))
+        },
+        ...alignmentActions(
+          this.view.scrollDOM,
+          this.position,
+          (p) => this.dispatch({ type: "place", id: this.pin.id, placement: p })
+        ),
+        {
+          label: "Reset rotation",
+          icon: "rotate-ccw",
+          run: () => this.dispatch({
+            type: "place",
+            id: this.pin.id,
+            placement: { rotation: 0 }
+          })
+        },
+        ...layerActions(this.selection, this),
+        {
+          label: "Duplicate",
+          icon: "copy",
+          run: () => this.view.dispatch({
+            changes: { from: this.pin.to, insert: "\n\n" + this.pin.text }
+          })
+        },
+        {
+          label: "Return to text flow",
+          icon: "corner-up-left",
+          run: () => this.dispatch({ type: "remove", id: this.pin.id })
+        },
+        {
+          label: "Return and edit source",
+          icon: "file-text",
+          run: () => {
+            const from = this.pin.from;
+            this.dispatch({ type: "remove", id: this.pin.id });
+            this.view.dispatch({
+              selection: { anchor: from },
+              scrollIntoView: true
+            });
+            this.view.focus();
+          }
+        },
+        { label: "Delete", icon: "trash-2", run: () => this.remove() }
+      ],
+      point
+    );
   };
   position = () => this.pin;
   bounds = () => rotatedBounds(this.pin);
@@ -8054,6 +8079,7 @@ var FloatingBlock = class {
     this.grip.focus({ preventScroll: true });
   }
   beginDrag(event, alignToPointer = false) {
+    if (event.button !== 0) return;
     this.select();
     if (alignToPointer) {
       const rect = this.view.scrollDOM.getBoundingClientRect();

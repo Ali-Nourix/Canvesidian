@@ -347,9 +347,42 @@ export function gripInteraction(
   };
   return () => cleanup?.();
 }
+export interface MenuPoint {
+  x: number;
+  y: number;
+}
+/** Object actions on right-click; editable controls retain their native context menu. */
+export function bindContextMenu(
+  root: HTMLElement,
+  open: (point?: MenuPoint) => void,
+) {
+  root.addEventListener("contextmenu", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (
+      target?.closest(
+        "textarea,input,select,[contenteditable='true'],.cv-property-popover",
+      )
+    ) {
+      // Don't let an ancestor object/editor replace the text field's native menu.
+      event.stopPropagation();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    open(
+      event.clientX || event.clientY
+        ? { x: event.clientX, y: event.clientY }
+        : undefined,
+    );
+  });
+}
 const activeMenus = new WeakMap<HTMLElement, Menu>();
 /** Obsidian owns menu rendering, keyboard navigation, positioning and theme. */
-export function actionMenu(anchor: HTMLElement, actions: MenuAction[]) {
+export function actionMenu(
+  anchor: HTMLElement,
+  actions: MenuAction[],
+  point?: MenuPoint,
+) {
   const editor = anchor.closest<HTMLElement>(".cm-editor");
   if (!editor) return;
   activeMenus.get(editor)?.hide();
@@ -374,7 +407,9 @@ export function actionMenu(anchor: HTMLElement, actions: MenuAction[]) {
   });
   const rect = anchor.getBoundingClientRect();
   menu.showAtPosition(
-    { x: rect.left, y: rect.bottom, width: rect.width, left: true },
+    point
+      ? { x: point.x, y: point.y }
+      : { x: rect.left, y: rect.bottom, width: rect.width, left: true },
     anchor.ownerDocument,
   );
 }

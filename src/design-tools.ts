@@ -26,6 +26,8 @@ import {
   rotationField,
   rotationHandle,
   actionMenu,
+  bindContextMenu,
+  MenuPoint,
   alignmentActions,
   copyText,
   layerActions,
@@ -1203,6 +1205,7 @@ class DrawingObject implements Selectable {
       this.gesture(e);
     };
     this.root.ondblclick = () => this.editText();
+    bindContextMenu(this.root, (point) => this.menu(point));
     this.root.onkeydown = (e) => {
       if (
         e.target instanceof HTMLButtonElement ||
@@ -1225,7 +1228,7 @@ class DrawingObject implements Selectable {
     this.frame.style.rotate = (p.rotation ?? 0) + "deg";
   }
   setLayer = (layer: number) => this.change({ ...this.value, layer });
-  menu = () => {
+  menu = (point?: MenuPoint) => {
     this.select();
     const actions = [
       {
@@ -1274,6 +1277,7 @@ class DrawingObject implements Selectable {
     actionMenu(
       this.root.querySelector<HTMLElement>(".cv-object-grip")!,
       actions,
+      point,
     );
   };
   position = () => this.value;
